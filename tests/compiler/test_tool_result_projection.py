@@ -77,6 +77,67 @@ def test_pinned_tool_result_is_kept_whole() -> None:
     assert outcome.graph.events["call_1"].outputs == {"a": 1, "b": 2}
 
 
+def test_field_name_containing_a_dot_is_matched_and_projected_correctly() -> None:
+    result = TraceEvent(
+        id="call_1",
+        seq=0,
+        type=EventType.TOOL_RESULT,
+        outputs={"user.name": "Alice", "status": "ok"},
+        writes=frozenset({"tool_result:call_1.user.name", "tool_result:call_1.status"}),
+    )
+    reader = TraceEvent(
+        id="reader",
+        seq=1,
+        type=EventType.MODEL_MESSAGE,
+        reads=frozenset({"tool_result:call_1.user.name"}),
+        outputs={"content": "..."},
+    )
+    graph = build_causal_graph([result, reader])
+    outcome = ToolResultProjectionPass().apply(graph, CompileContext())
+    projected = outcome.graph.events["call_1"]
+    assert projected.outputs == {"user.name": "Alice"}
+    assert projected.writes == frozenset({"tool_result:call_1.user.name"})
+
+
+def test_opaque_result_with_a_dotted_call_id_is_not_mistaken_for_field_projectable() -> None:
+    result = TraceEvent(
+        id="call.1",
+        seq=0,
+        type=EventType.TOOL_RESULT,
+        outputs={"nested": {"a": 1}},
+        writes=frozenset({"tool_result:call.1"}),
+    )
+    other = TraceEvent(id="other", seq=1, type=EventType.STATE_UPDATE)
+    graph = build_causal_graph([result, other])
+    outcome = ToolResultProjectionPass().apply(graph, CompileContext())
+    assert outcome.graph.events["call.1"].outputs == {"nested": {"a": 1}}
+    assert outcome.report.modified_event_ids == []
+
+
+def test_non_field_write_key_survives_projection_untouched() -> None:
+    result = TraceEvent(
+        id="call_1",
+        seq=0,
+        type=EventType.TOOL_RESULT,
+        outputs={"title": "bug", "body": "long text"},
+        writes=frozenset(
+            {"tool_result:call_1.title", "tool_result:call_1.body", "conversation:current"}
+        ),
+    )
+    reader = TraceEvent(
+        id="reader",
+        seq=1,
+        type=EventType.MODEL_MESSAGE,
+        reads=frozenset({"tool_result:call_1.title"}),
+        outputs={"content": "..."},
+    )
+    graph = build_causal_graph([result, reader])
+    outcome = ToolResultProjectionPass().apply(graph, CompileContext())
+    projected = outcome.graph.events["call_1"]
+    assert projected.outputs == {"title": "bug"}
+    assert projected.writes == frozenset({"tool_result:call_1.title", "conversation:current"})
+
+
 def test_opaque_tool_result_is_untouched() -> None:
     result = TraceEvent(
         id="call_1",
