@@ -13,12 +13,20 @@ class DeadEventsPass(Pass):
     The anchor is ``ctx.anchor_event_id`` if set, otherwise the event with
     the highest ``seq`` (the most recent one, i.e. "now"). An event
     survives if it is the anchor itself, a causal ancestor of the anchor
-    (per :meth:`~agentslice.ir.graph.CausalGraph.ancestors`), or pinned
-    with a ``seq`` no later than the anchor's. That last bound matters:
-    without it, a constraint (or any other pinned event) recorded *after*
-    the anchor would still survive, leaking future information into what
-    is supposed to be a snapshot of "everything known up to this point" —
-    exactly the scenario ``fork`` relies on not happening.
+    (per :meth:`~agentslice.ir.graph.CausalGraph.ancestors`), a pinned
+    event with a ``seq`` no later than the anchor's, or a causal ancestor
+    of one of those pinned events. That last clause matters: a pinned
+    event is kept for reasons unrelated to the anchor (it is a standing
+    constraint, say), but it can still ``reads`` a fact written by some
+    earlier, unpinned, non-ancestor-of-anchor event. Without also keeping
+    that writer alive, rebuilding the graph from the survivors would leave
+    the pinned event's read unresolved, silently — a protected event would
+    survive without the data it depends on. The anchor-seq bound on
+    pinned events matters too: without it, a constraint (or any other
+    pinned event) recorded *after* the anchor would still survive, leaking
+    future information into what is supposed to be a snapshot of
+    "everything known up to this point" — exactly the scenario ``fork``
+    relies on not happening.
     """
 
     name = "dead_events"
@@ -42,11 +50,14 @@ class DeadEventsPass(Pass):
         anchor_seq = anchor.seq if anchor is not None else None
 
         alive = {anchor_id} | graph.ancestors(anchor_id)
-        alive |= {
+        pinned_alive = {
             event.id
             for event in events
             if event.pinned and (anchor_seq is None or event.seq <= anchor_seq)
         }
+        for pinned_id in pinned_alive:
+            alive |= graph.ancestors(pinned_id)
+        alive |= pinned_alive
 
         removed_ids = [event.id for event in events if event.id not in alive]
         surviving = [event for event in events if event.id in alive]

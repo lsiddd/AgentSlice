@@ -49,6 +49,25 @@ def test_pinned_event_after_the_anchor_is_dropped() -> None:
     assert outcome.report.removed_event_ids == ["future"]
 
 
+def test_pinned_event_keeps_the_writer_of_a_fact_it_reads() -> None:
+    writer = TraceEvent(
+        id="w", seq=0, type=EventType.TOOL_RESULT, writes=frozenset({"x"}), outputs={"x": 1}
+    )
+    pinned = TraceEvent(
+        id="pinned",
+        seq=1,
+        type=EventType.CONSTRAINT,
+        pinned=True,
+        reads=frozenset({"x"}),
+        inputs={"x": 1},
+    )
+    anchor = TraceEvent(id="anchor", seq=2, type=EventType.STATE_UPDATE)
+    graph = build_causal_graph([writer, pinned, anchor])
+    outcome = DeadEventsPass().apply(graph, CompileContext(anchor_event_id="anchor"))
+    assert set(outcome.graph.events) == {"w", "pinned", "anchor"}
+    assert outcome.graph.unresolved_reads == set()
+
+
 def test_single_event_graph_is_kept() -> None:
     only = TraceEvent(id="only", seq=0, type=EventType.USER_GOAL)
     graph = build_causal_graph([only])
