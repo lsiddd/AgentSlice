@@ -12,7 +12,7 @@ from agentslice.errors import (
     UnsupportedMessageFormatError,
 )
 from agentslice.ir import CausalEdge, CausalGraph, EventType, Fact, TraceEvent, build_causal_graph
-from agentslice.recording import TraceReader, TraceWriter
+from agentslice.recording import TraceReader, TraceWriter, from_openai_messages
 
 __all__ = [
     "__version__",
@@ -34,4 +34,5 @@ __all__ = [
     "build_causal_graph",
     "TraceReader",
     "TraceWriter",
+    "from_openai_messages",
 ]
