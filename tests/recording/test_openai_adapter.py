@@ -129,9 +129,9 @@ def test_side_effects_flag_only_set_for_listed_tools() -> None:
         {"role": "tool", "tool_call_id": "call_2", "content": "{}"},
     ]
     events = from_openai_messages(messages, side_effect_tools={"delete_file"})
-    results = {e.id: e for e in events if e.type is EventType.TOOL_RESULT}
-    assert results["call_1"].side_effects is True
-    assert results["call_2"].side_effects is False
+    results = {e.tool_name: e for e in events if e.type is EventType.TOOL_RESULT}
+    assert results["delete_file"].side_effects is True
+    assert results["read_file"].side_effects is False
 
 
 def test_tool_call_reads_inferred_by_value_match() -> None:

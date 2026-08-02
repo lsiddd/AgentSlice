@@ -209,7 +209,7 @@ def from_openai_messages(
 
             events.append(
                 TraceEvent(
-                    id=call_id,
+                    id=f"msg_{message_index}",
                     seq=seq,
                     type=EventType.TOOL_RESULT,
                     tool_name=tool_name,
