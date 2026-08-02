@@ -6,18 +6,29 @@ so this adapter has to infer it. The rules, deliberately conservative:
 
 - A ``tool_call``'s ``reads`` are the keys of every known fact whose current
   value appears, verbatim, as a leaf value somewhere in the call's
-  arguments. No match, no read: a call motivated by free-form reasoning
-  rather than a traceable prior value gets an empty ``reads``.
+  arguments, plus ``user_goal:current`` (see below). A call motivated by
+  free-form reasoning rather than a traceable prior value still reads the
+  active goal.
 - A ``tool_result``'s ``writes`` is one key per top-level field when its
   parsed output is a shallow dict (no nested dict/list values), or a single
-  opaque key otherwise. ``side_effects`` is only ever ``True`` when the
-  tool's name appears in the caller-supplied ``side_effect_tools`` set;
-  there is no prefix-based guessing (``delete_``, ``write_`` etc.).
+  opaque key otherwise. Its ``reads`` always includes ``tool_call:{id}``,
+  the fact its own ``tool_call`` wrote: a result cannot exist without the
+  call that produced it, so this keeps the two alive or dead together
+  under ``dead_events`` rather than letting a result survive as an orphan.
+  ``side_effects`` is only ever ``True`` when the tool's name appears in
+  the caller-supplied ``side_effect_tools`` set; there is no prefix-based
+  guessing (``delete_``, ``write_`` etc.).
+- Every ``user`` message writes ``user_goal:current``, a fact re-versioned
+  (not accumulated) by each new user turn. Every ``tool_call`` and
+  ``model_message`` reads it, so whichever goal was active when they
+  happened stays a causal ancestor of anything that followed from it —
+  without this, a user's goal writes no fact at all and is invisible to
+  ``dead_events``, which only tracks fact dependencies, not message order.
 - A ``model_message`` (assistant content with no tool calls) conservatively
-  reads every fact written since the previous ``model_message``. This
-  over-approximates on purpose: it never omits something the model could
-  plausibly have used, at the cost of limiting how much
-  ``tool_result_projection`` can later trim from free-form text.
+  reads every fact written since the previous ``model_message``, plus
+  ``user_goal:current``. This over-approximates on purpose: it never omits
+  something the model could plausibly have used, at the cost of limiting
+  how much ``tool_result_projection`` can later trim from free-form text.
 
 An assistant message that carries both ``tool_calls`` and ``content``
 emits only the tool calls; the accompanying content is treated as
@@ -27,11 +38,33 @@ non-load-bearing reasoning and dropped, a deliberate v0.1 simplification.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from agentslice.errors import UnsupportedMessageFormatError
 from agentslice.ir.events import EventType, TraceEvent
+
+_USER_GOAL_KEY = "user_goal:current"
+_TOOL_CALL_KEY_PREFIX = "tool_call:"
+
+
+def tool_call_id_of(event: TraceEvent) -> str:
+    """Recover the ``tool_call_id`` a ``tool_result`` event answers.
+
+    Reads it off the ``tool_call:{id}`` key in ``event.reads`` that links
+    every ``tool_result`` produced here back to its ``tool_call``.
+
+    Raises:
+        UnsupportedMessageFormatError: ``event`` carries no such key —
+            either it isn't a ``tool_result``, or it predates this linkage
+            (hand-built, or recorded before the fix that added it).
+    """
+    for key in event.reads:
+        if key.startswith(_TOOL_CALL_KEY_PREFIX):
+            return key[len(_TOOL_CALL_KEY_PREFIX) :]
+    raise UnsupportedMessageFormatError(
+        f"event {event.id!r} has no 'tool_call:<id>' read; cannot recover its tool_call_id"
+    )
 
 
 def _iter_leaf_values(value: Any) -> Iterable[Any]:
@@ -115,6 +148,7 @@ def from_openai_messages(
                     seq=seq,
                     type=EventType.USER_GOAL,
                     outputs={"content": message.get("content") or ""},
+                    writes=frozenset({_USER_GOAL_KEY}),
                 )
             )
             seq += 1
@@ -147,6 +181,7 @@ def from_openai_messages(
                         if _is_matchable(value)
                         and any(value == leaf for leaf in _iter_leaf_values(inputs))
                     }
+                    reads.add(_USER_GOAL_KEY)
                     events.append(
                         TraceEvent(
                             id=call_id,
@@ -155,6 +190,7 @@ def from_openai_messages(
                             tool_name=tool_name,
                             inputs=inputs,
                             reads=frozenset(reads),
+                            writes=frozenset({f"{_TOOL_CALL_KEY_PREFIX}{call_id}"}),
                         )
                     )
                     seq += 1
@@ -168,7 +204,7 @@ def from_openai_messages(
                         seq=seq,
                         type=EventType.MODEL_MESSAGE,
                         outputs={"content": content},
-                        reads=frozenset(since_last_model_message),
+                        reads=frozenset(since_last_model_message | {_USER_GOAL_KEY}),
                     )
                 )
                 since_last_model_message = set()
@@ -214,6 +250,7 @@ def from_openai_messages(
                     type=EventType.TOOL_RESULT,
                     tool_name=tool_name,
                     outputs=outputs,
+                    reads=frozenset({f"{_TOOL_CALL_KEY_PREFIX}{call_id}"}),
                     writes=frozenset(writes),
                     side_effects=tool_name in side_effect_tools,
                 )
@@ -226,3 +263,77 @@ def from_openai_messages(
             )
 
     return events
+
+
+def to_openai_messages(events: Sequence[TraceEvent]) -> list[dict[str, Any]]:
+    """Convert a ``TraceEvent`` sequence back into OpenAI-compatible chat messages.
+
+    The inverse of :func:`from_openai_messages`, for feeding a recorded,
+    compiled, or forked trace back to a real model (see
+    ``agentslice.replay``). ``events`` must already be in canonical order
+    (e.g. :meth:`~agentslice.ir.graph.CausalGraph.events_in_order`, or
+    :attr:`~agentslice.compiler.base.CompiledContext.events`).
+
+    Each consecutive run of ``tool_call`` events becomes a single assistant
+    message with one ``tool_calls`` entry per call — one call per message
+    would also be valid, but this mirrors the parallel-call shape the
+    original API response likely had, and survives a compiler pass
+    dropping some (not all) calls from an original parallel group. A
+    ``tool_result``'s ``tool_call_id`` is recovered via
+    :func:`tool_call_id_of`.
+
+    Raises:
+        UnsupportedMessageFormatError: An event's type has no OpenAI
+            message equivalent (``state_update``, ``error``,
+            ``final_output``), or a ``tool_result`` predates the
+            ``tool_call:{id}`` linkage :func:`tool_call_id_of` relies on.
+    """
+    messages: list[dict[str, Any]] = []
+    pending_tool_calls: list[dict[str, Any]] = []
+
+    def flush_tool_calls() -> None:
+        if pending_tool_calls:
+            messages.append(
+                {"role": "assistant", "content": None, "tool_calls": list(pending_tool_calls)}
+            )
+            pending_tool_calls.clear()
+
+    for event in events:
+        if event.type is EventType.TOOL_CALL:
+            pending_tool_calls.append(
+                {
+                    "id": event.id,
+                    "type": "function",
+                    "function": {
+                        "name": event.tool_name or "",
+                        "arguments": json.dumps(event.inputs or {}),
+                    },
+                }
+            )
+            continue
+
+        flush_tool_calls()
+
+        if event.type is EventType.CONSTRAINT:
+            messages.append({"role": "system", "content": (event.outputs or {}).get("content", "")})
+        elif event.type is EventType.USER_GOAL:
+            messages.append({"role": "user", "content": (event.outputs or {}).get("content", "")})
+        elif event.type is EventType.MODEL_MESSAGE:
+            messages.append(
+                {"role": "assistant", "content": (event.outputs or {}).get("content", "")}
+            )
+        elif event.type is EventType.TOOL_RESULT:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id_of(event),
+                    "content": json.dumps(event.outputs or {}),
+                }
+            )
+        else:
+            raise UnsupportedMessageFormatError(
+                f"event {event.id!r}: {event.type} has no OpenAI message equivalent"
+            )
+
+    flush_tool_calls()
+    return messages

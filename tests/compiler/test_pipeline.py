@@ -5,6 +5,7 @@ from agentslice.compiler.pipeline import DEFAULT_PASSES, Pipeline, compile_graph
 from agentslice.errors import BudgetNotSatisfiableError
 from agentslice.ir.events import EventType, TraceEvent
 from agentslice.ir.graph import CausalGraph, build_causal_graph
+from agentslice.recording.openai_adapter import from_openai_messages
 
 
 class _NoopPass(Pass):
@@ -55,3 +56,32 @@ def test_no_budget_leaves_budget_satisfied_none() -> None:
     graph = build_causal_graph([TraceEvent(id="a", seq=0, type=EventType.STATE_UPDATE)])
     result = compile_graph(graph)
     assert result.budget_satisfied is None
+
+
+def test_default_compile_keeps_goal_and_originating_call_for_a_realistic_turn() -> None:
+    messages = [
+        {"role": "system", "content": "be helpful"},
+        {"role": "user", "content": "what's the weather in nyc?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "nyc"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"temp": 72}'},
+        {"role": "assistant", "content": "it's 72F in nyc"},
+    ]
+    graph = build_causal_graph(from_openai_messages(messages))
+    result = compile_graph(graph)
+    assert {e.type for e in result.events} == {
+        EventType.CONSTRAINT,
+        EventType.USER_GOAL,
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.MODEL_MESSAGE,
+    }
