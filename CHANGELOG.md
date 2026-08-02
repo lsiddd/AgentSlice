@@ -36,6 +36,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ReplaySession`/`LiveSession` now accept a `timeout` (default 120s,
   `httpx`'s own default of 5s was too short for a reasoning model).
 
+### Fixed
+
+- `ir.graph.build_causal_graph` now rejects a duplicate event `id` (only
+  duplicate `seq` was checked before), which previously let one event
+  silently shadow another in the graph without raising. The OpenAI
+  adapter also detects the specific case of a `tool_call`'s externally
+  supplied id colliding with an internally generated one.
+- `compiler.superseded_state`: a superseded event is no longer
+  removed/redacted if a surviving event still has a causal edge reading
+  its historical value, which previously left that reader's `reads`
+  unresolved.
+- `compiler.dead_events`: a pinned event is now only kept when its `seq`
+  is at or before the anchor's — a pinned event recorded after the
+  anchor (e.g. a later constraint) no longer leaks into a forked context.
+- `compiler.schema_pruning`: `strict_schema=True` now raises
+  `UnknownToolError` when the tool catalog is empty but tools were used,
+  instead of silently no-opping.
+- `compiler.tool_result_projection`: the per-field write key mapping is
+  matched by exact suffix instead of splitting on the last dot, so a
+  field name containing a dot is no longer truncated, and an opaque
+  result whose call id happens to contain a dot is no longer mistaken
+  for a field-projectable one. Write keys unrelated to a specific output
+  field now survive projection instead of being dropped.
+- `recording.openai_adapter`: every event now also writes a versioned
+  `conversation:current` fact, read by each `user` turn after the first,
+  so forking mid-conversation no longer strands a follow-up turn with no
+  causal path back to earlier context. A nested `tool_result` now indexes
+  its individual leaf values so a later `tool_call` referencing one is
+  still linked by value match. A `tool_result` whose content wasn't a
+  JSON object preserves its original text verbatim across a
+  `to_openai_messages` round trip instead of re-wrapping it as JSON.
+- `replay.comparator.next_action_equivalence` now compares tool calls by
+  multiset instead of set, so a repeated identical call is no longer
+  conflated with a single call.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added
