@@ -1,11 +1,14 @@
 from agentslice.__about__ import __version__
 from agentslice.compiler import (
+    DEFAULT_PASSES,
     CompilationReport,
     CompileContext,
     CompiledContext,
     Pass,
     PassOutcome,
+    Pipeline,
     ToolSchema,
+    compile_graph,
 )
 from agentslice.errors import (
     AdapterError,
@@ -50,4 +53,7 @@ __all__ = [
     "CompiledContext",
     "PassOutcome",
     "Pass",
+    "DEFAULT_PASSES",
+    "Pipeline",
+    "compile_graph",
 ]
