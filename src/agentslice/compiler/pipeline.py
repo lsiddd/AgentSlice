@@ -13,6 +13,7 @@ from agentslice.compiler.base import (
 )
 from agentslice.compiler.constraint_pinning import ConstraintPinningPass
 from agentslice.compiler.dead_events import DeadEventsPass
+from agentslice.compiler.duplicate_result_elimination import DuplicateResultEliminationPass
 from agentslice.compiler.schema_pruning import SchemaPruningPass
 from agentslice.compiler.superseded_state import SupersededStatePass
 from agentslice.compiler.tokens import estimate_graph_tokens
@@ -24,6 +25,7 @@ DEFAULT_PASSES: tuple[Pass, ...] = (
     ConstraintPinningPass(),
     DeadEventsPass(),
     SupersededStatePass(),
+    DuplicateResultEliminationPass(),
     ToolResultProjectionPass(),
     SchemaPruningPass(),
 )
