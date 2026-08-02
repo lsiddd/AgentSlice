@@ -244,15 +244,22 @@ Core IR, the six-pass default compiler, and deterministic replay/fork are
 implemented and tested against real recorded sessions (Claude Code, Codex
 CLI, and raw OpenAI/OpenRouter chat completions), not just synthetic
 fixtures. The opt-in failed-hypothesis pipeline is covered end to end with
-deterministic fixtures and mock HTTP replay; behavioral benchmarking against
-real models is the next milestone. See [CHANGELOG.md](CHANGELOG.md) for the
-full history, including a recent audit that closed several
+deterministic fixtures and mock HTTP replay. See [CHANGELOG.md](CHANGELOG.md)
+for the full history, including a recent audit that closed several
 causal-completeness gaps uncovered by real-world usage.
+
+A benchmark harness comparing context policies (including the causal
+compiler above) against a subset of the Berkeley Function Calling
+Leaderboard now exists in [`benchmarks/`](benchmarks/README.md), outside
+the installable package. It currently covers one BFCL environment
+(`GorillaFileSystem`) and one category (`multi_turn_base`); running it for
+real spends API budget, so it's a separate, deliberate step from
+installing the library.
 
 ### Roadmap
 
-- A benchmark harness against a subset of the Berkeley Function Calling
-  Leaderboard (BFCL).
+- Wider BFCL environment/category coverage in the benchmark harness, and a
+  full run against real models.
 - Export of compiled/uncompiled pairs as a DPO preference dataset.
 - Adapters for MCP and LangGraph.
 

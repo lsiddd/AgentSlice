@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `benchmarks/`: a benchmark harness comparing context-construction
+  policies — including AgentSlice's own causal compiler — against a
+  subset of the Berkeley Function Calling Leaderboard (BFCL), Marco 10 in
+  the roadmap. Deliberately outside the installable package (see
+  `benchmarks/README.md`): it depends on a vendored dataset subset and,
+  when actually run, a paid model API. Drives each task live turn by
+  turn against a real model, executing tool calls against a simulated
+  `GorillaFileSystem` backend ported from BFCL's reference implementation,
+  and reports context reduction, next-action/argument equivalence,
+  end-to-end success, constraint retention, invalid/extra call rate,
+  replay determinism, and an estimated cost per successful task. Currently
+  covers `GorillaFileSystem` and the `multi_turn_base` category (13
+  tasks); wider coverage is future work.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added

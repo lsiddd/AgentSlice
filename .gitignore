@@ -11,6 +11,9 @@ build/
 .coverage
 htmlcov/
 
+# cached responses from real benchmark runs (see benchmarks/cache.py)
+/benchmarks/.cache/
+
 # internal operating notes — never committed
 /NEXT_STEPS.md
 /CLAUDE.md
