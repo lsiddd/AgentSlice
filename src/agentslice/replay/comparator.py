@@ -2,18 +2,21 @@
 
 v0.2 scope, matching the roadmap's stated limitation: equivalence here is
 exact, not semantic. Two tool calls match only if every call's tool name
-and JSON-normalized arguments match exactly (order-independent, since
-parallel calls carry no meaningful order); two non-call messages match
-only if both are, or both aren't, a final text answer. Differently-phrased
-but semantically equivalent text, or a call with functionally-equivalent
-but textually different arguments (e.g. a reordered list), are *not*
-considered equal. A real semantic comparator (embeddings or an LLM judge)
-is out of scope here and left to a future milestone.
+and JSON-normalized arguments match exactly, order-independent (parallel
+calls carry no meaningful order) but multiplicity-sensitive: calling the
+same tool with the same arguments twice is not equivalent to calling it
+once. Two non-call messages match only if both are, or both aren't, a
+final text answer. Differently-phrased but semantically equivalent text,
+or a call with functionally-equivalent but textually different arguments
+(e.g. a reordered list), are *not* considered equal. A real semantic
+comparator (embeddings or an LLM judge) is out of scope here and left to a
+future milestone.
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
@@ -72,8 +75,8 @@ def next_action_equivalence(original: dict[str, Any], replayed: dict[str, Any]) 
     return bool(original.get("content")) == bool(replayed.get("content"))
 
 
-def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> frozenset[tuple[str, str]]:
-    normalized: set[tuple[str, str]] = set()
+def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> Counter[tuple[str, str]]:
+    normalized: Counter[tuple[str, str]] = Counter()
     for call in tool_calls:
         function = call.get("function", {})
         name = function.get("name", "")
@@ -82,5 +85,5 @@ def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> frozenset[tuple[s
             arguments = json.dumps(json.loads(raw_arguments), sort_keys=True)
         except json.JSONDecodeError:
             arguments = raw_arguments
-        normalized.add((name, arguments))
-    return frozenset(normalized)
+        normalized[(name, arguments)] += 1
+    return normalized

@@ -145,6 +145,21 @@ def test_equivalence_false_when_only_one_side_calls_a_tool() -> None:
     assert next_action_equivalence(original, replayed) is False
 
 
+def test_equivalence_false_when_one_side_repeats_an_identical_call() -> None:
+    original = {
+        "tool_calls": [
+            {"function": {"name": "send_email", "arguments": '{"to": "a@example.com"}'}},
+            {"function": {"name": "send_email", "arguments": '{"to": "a@example.com"}'}},
+        ]
+    }
+    replayed = {
+        "tool_calls": [
+            {"function": {"name": "send_email", "arguments": '{"to": "a@example.com"}'}},
+        ]
+    }
+    assert next_action_equivalence(original, replayed) is False
+
+
 def test_equivalence_falls_back_to_raw_string_for_non_json_arguments() -> None:
     original = {"tool_calls": [{"function": {"name": "a", "arguments": "not json"}}]}
     replayed = {"tool_calls": [{"function": {"name": "a", "arguments": "not json"}}]}
