@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `to_openai_messages`, the inverse of `from_openai_messages`: converts a
+  `TraceEvent` sequence back into OpenAI-compatible chat messages.
+- A `recording.openai_adapter` fix closing a causal gap: `user_goal` now
+  writes a versioned `user_goal:current` fact read by every `tool_call`
+  and `model_message`, and every `tool_result` reads the `tool_call:{id}`
+  fact its own `tool_call` wrote. Previously neither the user's goal nor
+  the arguments of a tool call had any causal edge pointing to them, so
+  `dead_events` routinely dropped both from a compiled context.
+- `agentslice.replay`: deterministic replay and fork of a recorded
+  execution. `ReplaySession`/`replay_compiled_context` resend a compiled
+  or forked context to a real model and capture its next action;
+  `fill_pending_tool_results` answers any pending `tool_call` from the
+  original trace rather than executing a tool for real;
+  `next_action_equivalence`/`extract_next_recorded_action` compare that
+  action, exactly (tool name + JSON-normalized arguments, or presence of
+  a final text answer), against what the original trace actually did
+  next.
+- CLI: `agentslice replay` and `agentslice fork` commands.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added

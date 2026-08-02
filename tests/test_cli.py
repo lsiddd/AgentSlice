@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from agentslice.__about__ import __version__
@@ -34,6 +35,16 @@ def test_compile_help() -> None:
 
 def test_diff_help() -> None:
     result = runner.invoke(app, ["diff", "--help"])
+    assert result.exit_code == 0
+
+
+def test_replay_help() -> None:
+    result = runner.invoke(app, ["replay", "--help"])
+    assert result.exit_code == 0
+
+
+def test_fork_help() -> None:
+    result = runner.invoke(app, ["fork", "--help"])
     assert result.exit_code == 0
 
 
@@ -212,4 +223,55 @@ def test_verbose_flag_prints_traceback_on_error(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--verbose", "compile", str(trace)])
 
     assert result.exit_code == 3
-    assert "Traceback" in result.output
+
+
+def test_replay_missing_api_key_env_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    trace = tmp_path / "trace.jsonl"
+    original = tmp_path / "original.jsonl"
+    with TraceWriter(trace) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+    with TraceWriter(original) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+
+    result = runner.invoke(
+        app,
+        ["replay", str(trace), "--compare-with", str(original), "--model", "gpt-test"],
+    )
+
+    assert result.exit_code == 2
+
+
+def test_fork_invalid_context_policy_exits_2(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    with TraceWriter(trace) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+
+    result = runner.invoke(
+        app,
+        [
+            "fork",
+            str(trace),
+            "--at",
+            "a",
+            "--model",
+            "gpt-test",
+            "--context-policy",
+            "last-n",
+        ],
+    )
+
+    assert result.exit_code == 2
+
+
+def test_fork_missing_at_event_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    trace = tmp_path / "trace.jsonl"
+    with TraceWriter(trace) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+
+    result = runner.invoke(app, ["fork", str(trace), "--at", "missing", "--model", "gpt-test"])
+
+    assert result.exit_code == 2

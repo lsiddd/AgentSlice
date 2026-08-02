@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -20,11 +21,18 @@ from agentslice.errors import (
     AgentSliceError,
     CLIUsageError,
     CompilerError,
+    ReplayError,
     TraceError,
 )
 from agentslice.ir.graph import build_causal_graph
 from agentslice.recording.jsonl import TraceReader, TraceWriter
 from agentslice.recording.openai_adapter import from_openai_messages
+from agentslice.replay import (
+    ReplaySession,
+    extract_next_recorded_action,
+    next_action_equivalence,
+    replay_compiled_context,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -62,7 +70,7 @@ def main(
 
 
 def _exit_code_for(exc: AgentSliceError) -> int:
-    if isinstance(exc, TraceError | AdapterError):
+    if isinstance(exc, TraceError | AdapterError | ReplayError):
         return 3
     if isinstance(exc, CompilerError):
         return 4
@@ -325,5 +333,150 @@ def diff(
             typer.echo(json.dumps(payload, indent=2))
         else:
             _print_diff_table(rows, token_deltas)
+
+    _handle_errors(run, verbose=verbose)
+
+
+def _resolve_api_key(env_var: str) -> str:
+    api_key = os.environ.get(env_var)
+    if not api_key:
+        raise CLIUsageError(f"environment variable {env_var!r} is not set")
+    return api_key
+
+
+def _load_tool_catalog(path: Path | None) -> dict[str, ToolSchema] | None:
+    if path is None:
+        return None
+    try:
+        raw_tools = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise CLIUsageError(f"{path}: invalid JSON: {exc}") from exc
+    return _parse_tool_catalog(raw_tools)
+
+
+def _print_replay_result(replayed: dict[str, Any], original_action: dict[str, Any] | None) -> None:
+    _out_console.print(json.dumps(replayed, indent=2))
+    if original_action is None:
+        _err_console.print("(no comparable next action recorded in the original trace)")
+        return
+    equivalent = next_action_equivalence(original_action, replayed)
+    status = "EQUIVALENT" if equivalent else "DIFFERENT"
+    _err_console.print(f"original next action: {json.dumps(original_action, indent=2)}")
+    _err_console.print(f"comparison: {status}")
+
+
+_BASE_URL_OPTION = typer.Option("--base-url", help="OpenAI-compatible API base URL.")
+_API_KEY_ENV_OPTION = typer.Option(
+    "--api-key-env", help="Environment variable holding the API key."
+)
+_TOOLS_OPTION = typer.Option(
+    "--tools", exists=True, readable=True, help="JSON file with an OpenAI-style tools array."
+)
+
+
+@app.command()
+def replay(
+    ctx: typer.Context,
+    trace: Annotated[
+        Path, typer.Argument(exists=True, readable=True, help="Compiled trace to replay.")
+    ],
+    compare_with: Annotated[
+        Path,
+        typer.Option(
+            "--compare-with",
+            exists=True,
+            readable=True,
+            help=(
+                "The original, uncompiled trace `trace` was derived from: source for filling "
+                "in any pending tool results and ground truth for the equivalence comparison."
+            ),
+        ),
+    ],
+    model: Annotated[str, typer.Option("--model", help="Model to send the replayed context to.")],
+    base_url: Annotated[str, _BASE_URL_OPTION] = "https://openrouter.ai/api/v1",
+    api_key_env: Annotated[str, _API_KEY_ENV_OPTION] = "OPENROUTER_API_KEY",
+    tools: Annotated[Path | None, _TOOLS_OPTION] = None,
+) -> None:
+    """Resend a compiled trace to a real model and compare its next action to the original.
+
+    Note: a compiled trace file carries only events, not the tool catalog
+    `schema_pruning` narrowed it to — pass the same (or a manually
+    narrowed) `--tools` file again if the replayed model should be able to
+    call tools.
+    """
+    verbose = ctx.obj["verbose"]
+
+    def run() -> None:
+        api_key = _resolve_api_key(api_key_env)
+        events = TraceReader(trace).read_all()
+        original_events = TraceReader(compare_with).read_all()
+        tool_catalog = _load_tool_catalog(tools)
+
+        with ReplaySession(base_url, api_key, model=model) as session:
+            replayed = replay_compiled_context(
+                events,
+                original_events=original_events,
+                session=session,
+                tool_catalog=tool_catalog,
+            )
+
+        anchor_id = max(events, key=lambda e: e.seq).id if events else None
+        original_action = (
+            extract_next_recorded_action(original_events, anchor_id) if anchor_id else None
+        )
+        _print_replay_result(replayed, original_action)
+
+    _handle_errors(run, verbose=verbose)
+
+
+@app.command()
+def fork(
+    ctx: typer.Context,
+    trace: Annotated[Path, typer.Argument(exists=True, readable=True, help="Full trace to fork.")],
+    at: Annotated[str, typer.Option("--at", help="Event id to fork at.")],
+    model: Annotated[str, typer.Option("--model", help="Model to send the forked context to.")],
+    context_policy: Annotated[
+        str,
+        typer.Option(
+            "--context-policy",
+            help="How to build the forked context. Only 'causal' is supported today.",
+        ),
+    ] = "causal",
+    budget: Annotated[
+        int | None, typer.Option("--budget", help="Token budget for the forked context.")
+    ] = None,
+    base_url: Annotated[str, _BASE_URL_OPTION] = "https://openrouter.ai/api/v1",
+    api_key_env: Annotated[str, _API_KEY_ENV_OPTION] = "OPENROUTER_API_KEY",
+    tools: Annotated[Path | None, _TOOLS_OPTION] = None,
+) -> None:
+    """Fork a trace at an event, compile the causal context up to it, and replay it to a model."""
+    verbose = ctx.obj["verbose"]
+
+    def run() -> None:
+        if context_policy != "causal":
+            raise CLIUsageError(
+                f"unsupported --context-policy {context_policy!r}: only 'causal' is supported"
+            )
+        api_key = _resolve_api_key(api_key_env)
+        original_events = TraceReader(trace).read_all()
+        if at not in {event.id for event in original_events}:
+            raise CLIUsageError(f"no event {at!r} in {trace}")
+
+        graph = build_causal_graph(original_events)
+        tool_catalog = _load_tool_catalog(tools)
+        compiled = compile_graph(
+            graph, budget_tokens=budget, tool_catalog=tool_catalog, anchor_event_id=at
+        )
+
+        with ReplaySession(base_url, api_key, model=model) as session:
+            replayed = replay_compiled_context(
+                compiled.events,
+                original_events=original_events,
+                session=session,
+                tool_catalog=compiled.tool_catalog,
+            )
+
+        original_action = extract_next_recorded_action(original_events, at)
+        _print_replay_result(replayed, original_action)
 
     _handle_errors(run, verbose=verbose)

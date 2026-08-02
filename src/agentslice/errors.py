@@ -61,3 +61,20 @@ class CLIUsageError(AgentSliceError):
     Reserved for usage problems that Typer's own argument parsing does not
     already cover (e.g. a value that parses but is semantically invalid).
     """
+
+
+class ReplayError(AgentSliceError):
+    """Base class for errors raised while replaying or forking a trace."""
+
+
+class MissingToolResultError(ReplayError):
+    """A ``tool_call`` has no recorded ``tool_result`` to substitute during replay.
+
+    Replay never executes a tool for real, so if neither the context being
+    replayed nor the original trace it was derived from has an answer for
+    some call, there is nothing else it can do.
+    """
+
+
+class UnknownAnchorError(ReplayError):
+    """A fork's ``--at`` event id has no matching event in the given trace."""
