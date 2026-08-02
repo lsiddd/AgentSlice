@@ -42,7 +42,7 @@ a real model to check whether it actually still behaves the same way.
   one, run in sequence by a `Pipeline`.
 
 ```
-constraint_pinning → dead_events → superseded_state → tool_result_projection → schema_pruning
+constraint_pinning → dead_events → superseded_state → duplicate_result_elimination → tool_result_projection → schema_pruning
 ```
 
 1. **`constraint_pinning`** marks every `constraint` event as pinned so later
@@ -52,9 +52,12 @@ constraint_pinning → dead_events → superseded_state → tool_result_projecti
 3. **`superseded_state`** collapses events whose written facts have all been
    overwritten since and that no surviving event still reads: dropped
    outright if they had no side effects, kept but redacted if they did.
-4. **`tool_result_projection`** shrinks a tool result down to only the
+4. **`duplicate_result_elimination`** collapses a later `tool_call`/
+   `tool_result` pair that exactly repeats an earlier one, same
+   remove-vs-redact split as `superseded_state`.
+5. **`tool_result_projection`** shrinks a tool result down to only the
    fields something still reads.
-5. **`schema_pruning`** narrows a supplied tool catalog down to the tools
+6. **`schema_pruning`** narrows a supplied tool catalog down to the tools
    actually used.
 
 ## Replay and fork
@@ -174,8 +177,7 @@ conversational context) uncovered by real-world usage.
 
 ### Roadmap
 
-- Two more compiler passes: duplicate-result elimination and
-  failed-hypothesis folding.
+- One more compiler pass: failed-hypothesis folding.
 - A benchmark harness against a subset of the Berkeley Function Calling
   Leaderboard (BFCL).
 - Export of compiled/uncompiled pairs as a DPO preference dataset.

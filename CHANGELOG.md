@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `compiler.duplicate_result_elimination.DuplicateResultEliminationPass`,
+  the sixth compiler pass: collapses a later `tool_call`/`tool_result`
+  pair that exactly repeats an earlier one (same `tool_name` and `inputs`,
+  identical `outputs`). Dropped outright when `side_effects=False`, kept
+  but redacted when `True`, mirroring `superseded_state`'s remove-vs-redact
+  split. Runs in `DEFAULT_PASSES` right after `superseded_state`. A
+  candidate is left untouched if the anchor or a pinned event is either
+  half of the pair, or if some other surviving event still has a causal
+  edge reading from the call or the result *and* doesn't also depend on
+  the retained baseline pair — a reader covered redundantly by both
+  (routine, since value-matching links a later call to every prior fact
+  sharing that value, not just the newest) doesn't block elimination.
+
 ## [0.2.0] - 2026-08-02
 
 ### Added
