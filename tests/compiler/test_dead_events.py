@@ -39,6 +39,16 @@ def test_pinned_but_unreachable_event_is_kept() -> None:
     assert set(outcome.graph.events) == {"pinned", "anchor"}
 
 
+def test_pinned_event_after_the_anchor_is_dropped() -> None:
+    past_constraint = TraceEvent(id="past", seq=0, type=EventType.CONSTRAINT, pinned=True)
+    anchor = TraceEvent(id="anchor", seq=1, type=EventType.STATE_UPDATE)
+    future_constraint = TraceEvent(id="future", seq=2, type=EventType.CONSTRAINT, pinned=True)
+    graph = build_causal_graph([past_constraint, anchor, future_constraint])
+    outcome = DeadEventsPass().apply(graph, CompileContext(anchor_event_id="anchor"))
+    assert set(outcome.graph.events) == {"past", "anchor"}
+    assert outcome.report.removed_event_ids == ["future"]
+
+
 def test_single_event_graph_is_kept() -> None:
     only = TraceEvent(id="only", seq=0, type=EventType.USER_GOAL)
     graph = build_causal_graph([only])

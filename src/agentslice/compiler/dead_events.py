@@ -13,7 +13,12 @@ class DeadEventsPass(Pass):
     The anchor is ``ctx.anchor_event_id`` if set, otherwise the event with
     the highest ``seq`` (the most recent one, i.e. "now"). An event
     survives if it is the anchor itself, a causal ancestor of the anchor
-    (per :meth:`~agentslice.ir.graph.CausalGraph.ancestors`), or pinned.
+    (per :meth:`~agentslice.ir.graph.CausalGraph.ancestors`), or pinned
+    with a ``seq`` no later than the anchor's. That last bound matters:
+    without it, a constraint (or any other pinned event) recorded *after*
+    the anchor would still survive, leaking future information into what
+    is supposed to be a snapshot of "everything known up to this point" —
+    exactly the scenario ``fork`` relies on not happening.
     """
 
     name = "dead_events"
@@ -33,8 +38,15 @@ class DeadEventsPass(Pass):
             return PassOutcome(graph=graph, ctx=ctx, report=report)
 
         anchor_id = ctx.anchor_event_id or events[-1].id
+        anchor = graph.events.get(anchor_id)
+        anchor_seq = anchor.seq if anchor is not None else None
+
         alive = {anchor_id} | graph.ancestors(anchor_id)
-        alive |= {event.id for event in events if event.pinned}
+        alive |= {
+            event.id
+            for event in events
+            if event.pinned and (anchor_seq is None or event.seq <= anchor_seq)
+        }
 
         removed_ids = [event.id for event in events if event.id not in alive]
         surviving = [event for event in events if event.id in alive]
