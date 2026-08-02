@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from agentslice.compiler.base import ToolSchema
+from agentslice.compiler.base import ToolEffect, ToolSchema
 from agentslice.replay.runtime import ReplaySession
 from benchmarks.bfcl.schema import BFCLTask
 from benchmarks.cache import ResponseCache
@@ -191,3 +191,35 @@ def test_positional_ground_truth_is_resolved_via_tools_payload() -> None:
 
     assert outcome.end_to_end_success is True
     assert outcome.turns[0].ground_truth_calls[0].kwargs == {"dir_name": "notes"}
+
+
+def test_side_effect_tools_are_derived_from_the_catalogs_tool_effect() -> None:
+    """`BenchmarkRunner` must classify events by the real per-tool effect, not a blanket default.
+
+    `from_openai_messages` only marks a `tool_result` as `side_effects=True`
+    for tools named in `side_effect_tools`; without this derivation every
+    GFS mutation (`mkdir`, `rm`, `echo`, ...) was silently treated as
+    side-effect-free. `superseded_state`/`duplicate_result_elimination`
+    already have their own dedicated coverage for what they do with that
+    flag (see `tests/recording/test_openai_adapter.py::
+    test_side_effects_flag_only_set_for_listed_tools` for the adapter side)
+    - this test only checks the wiring that was actually missing: deriving
+    the set from the catalog at all.
+    """
+    catalog = {
+        "mkdir": ToolSchema(name="mkdir", effects=ToolEffect.EFFECTFUL),
+        "ls": ToolSchema(name="ls", effects=ToolEffect.PURE),
+        "unclassified": ToolSchema(name="unclassified"),
+    }
+    session = ReplaySession(
+        "https://api.example.com/v1",
+        "sk-test",
+        model="m",
+        transport=httpx.MockTransport(_ScriptedHandler([_final()])),
+    )
+    runner = BenchmarkRunner(
+        session, "m", FullTracePolicy(), catalog, _TOOLS_PAYLOAD, create_gorilla_file_system
+    )
+    session.close()
+
+    assert runner._side_effect_tools == {"mkdir"}

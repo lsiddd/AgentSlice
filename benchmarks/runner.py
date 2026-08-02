@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentslice.compiler.base import ToolSchema
+from agentslice.compiler.base import ToolEffect, ToolSchema
 from agentslice.compiler.tokens import estimate_tokens
 from agentslice.recording.openai_adapter import from_openai_messages
 from agentslice.replay.comparator import next_action_equivalence
@@ -72,6 +72,9 @@ class BenchmarkRunner:
         self._model = model
         self._policy = policy
         self._tool_catalog = tool_catalog
+        self._side_effect_tools = {
+            name for name, schema in tool_catalog.items() if schema.effects is ToolEffect.EFFECTFUL
+        }
         self._param_names = param_names_from_tool_catalog(tools_payload)
         self._environment_factory = environment_factory
         self._cache = cache
@@ -99,7 +102,7 @@ class BenchmarkRunner:
             full_trace_tokens = 0
 
             for _ in range(self._config.max_tool_iterations_per_turn):
-                events = from_openai_messages(messages)
+                events = from_openai_messages(messages, side_effect_tools=self._side_effect_tools)
                 full_request = full_trace_policy.build_request(events, self._tool_catalog)
                 request = self._policy.build_request(events, self._tool_catalog)
                 context_tokens = request.tokens
@@ -157,7 +160,9 @@ class BenchmarkRunner:
 
         end_to_end_success = model_env.snapshot() == ground_truth_env.snapshot()
 
-        full_trace_events = from_openai_messages(messages)
+        full_trace_events = from_openai_messages(
+            messages, side_effect_tools=self._side_effect_tools
+        )
         baseline_messages = full_trace_policy.build_request(
             full_trace_events, self._tool_catalog
         ).messages
