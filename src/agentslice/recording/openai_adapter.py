@@ -61,6 +61,7 @@ non-load-bearing reasoning and dropped, a deliberate v0.1 simplification.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -104,6 +105,41 @@ def _iter_leaf_values(value: Any) -> Iterable[Any]:
 
 def _is_matchable(value: Any) -> bool:
     return value is not None and not isinstance(value, bool) and value != ""
+
+
+_MIN_TOKEN_MATCH_LENGTH = 6
+_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
+def _salient_tokens(value: str) -> Iterable[str]:
+    return (
+        token for token in _TOKEN_PATTERN.findall(value) if len(token) >= _MIN_TOKEN_MATCH_LENGTH
+    )
+
+
+def _facts_referenced_as_substrings(text: str, known_values: dict[str, Any]) -> set[str]:
+    """Return keys of known string facts that share a salient token with ``text``.
+
+    A `tool_call`'s own `reads` only catches a fact reused as a whole,
+    exact argument value - it has no way to notice a user typing a
+    filename a prior tool result *produced* (e.g. "sort
+    ArchivedFinalReport2024.txt" after an `mv` renamed something to that)
+    into a free-text instruction, since the result's own value is a full
+    sentence ("'FinalReport.txt' moved to 'ArchivedFinalReport2024.txt'"),
+    not that filename alone. Without this, `dead_events` sees no edge from
+    that instruction back to the call that produced the value it names,
+    and drops it - leaving a later turn referencing something the model
+    never saw get created. Matching is token-based, not whole-value: a
+    fact's value is split into identifier-shaped chunks and a match needs
+    only one shared chunk at or above the length floor, which keeps this
+    from firing on incidental short words ("moved", "the") that would
+    pull in facts the text isn't actually pointing at.
+    """
+    return {
+        key
+        for key, value in known_values.items()
+        if isinstance(value, str) and any(token in text for token in _salient_tokens(value))
+    }
 
 
 def _is_shallow_dict(value: Any) -> bool:
@@ -179,13 +215,15 @@ def from_openai_messages(
         elif role == "user":
             event_id = f"msg_{message_index}"
             claim_event_id(event_id, message_index)
+            content = message.get("content") or ""
+            reads = {CONVERSATION_KEY} | _facts_referenced_as_substrings(content, known_values)
             events.append(
                 TraceEvent(
                     id=event_id,
                     seq=seq,
                     type=EventType.USER_GOAL,
-                    outputs={"content": message.get("content") or ""},
-                    reads=frozenset({CONVERSATION_KEY}),
+                    outputs={"content": content},
+                    reads=frozenset(reads),
                     writes=frozenset({USER_GOAL_KEY, CONVERSATION_KEY}),
                 )
             )

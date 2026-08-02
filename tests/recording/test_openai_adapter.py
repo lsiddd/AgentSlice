@@ -398,6 +398,41 @@ def test_tool_call_reads_a_leaf_value_nested_inside_a_prior_tool_result() -> Non
     assert any(key.startswith("tool_result:call_1#") for key in second_call.reads)
 
 
+def test_user_message_reads_a_fact_it_names_as_a_free_text_substring() -> None:
+    messages = [
+        {"role": "user", "content": "rename report.txt to ArchivedFinalReport2024.txt"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("call_mv", "mv", "{}")],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_mv",
+            "content": '{"result": "report.txt moved to ArchivedFinalReport2024.txt"}',
+        },
+        {"role": "user", "content": "now sort ArchivedFinalReport2024.txt alphabetically"},
+    ]
+    events = from_openai_messages(messages)
+    second_user_goal = next(e for e in events if e.type is EventType.USER_GOAL and e.seq == 3)
+    assert any(key.startswith("tool_result:call_mv") for key in second_user_goal.reads)
+
+
+def test_user_message_ignores_short_substrings_below_the_match_floor() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("call_1", "get_status", "{}")],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"code": "OK"}'},
+        {"role": "user", "content": "is everything OK?"},
+    ]
+    events = from_openai_messages(messages)
+    second_user_goal = next(e for e in events if e.type is EventType.USER_GOAL)
+    assert not any(key.startswith("tool_result:call_1") for key in second_user_goal.reads)
+
+
 def test_tool_result_with_plain_text_content_round_trips_verbatim() -> None:
     messages = [
         {
