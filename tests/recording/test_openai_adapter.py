@@ -2,6 +2,7 @@ import pytest
 
 from agentslice.errors import UnsupportedMessageFormatError
 from agentslice.ir.events import EventType, TraceEvent
+from agentslice.ir.graph import build_causal_graph
 from agentslice.recording.openai_adapter import (
     from_openai_messages,
     to_openai_messages,
@@ -97,7 +98,7 @@ def test_tool_result_with_shallow_dict_writes_one_key_per_field() -> None:
     result_event = events[-1]
     assert result_event.type is EventType.TOOL_RESULT
     assert result_event.writes == frozenset(
-        {"tool_result:call_1.temp", "tool_result:call_1.condition"}
+        {"tool_result:call_1.temp", "tool_result:call_1.condition", "conversation:current"}
     )
 
 
@@ -116,7 +117,11 @@ def test_tool_result_with_nested_data_writes_one_opaque_key() -> None:
     ]
     events = from_openai_messages(messages)
     result_event = events[-1]
-    assert result_event.writes == frozenset({"tool_result:call_1"})
+    assert "tool_result:call_1" in result_event.writes
+    assert "conversation:current" in result_event.writes
+    # every leaf value nested inside the result also gets its own key, so a
+    # later tool_call referencing e.g. just the id can still be linked back.
+    assert any(key.startswith("tool_result:call_1#") for key in result_event.writes)
 
 
 def test_side_effects_flag_only_set_for_listed_tools() -> None:
@@ -169,7 +174,7 @@ def test_empty_assistant_message_with_no_content_and_no_tool_calls_is_skipped() 
 
 def test_user_goal_writes_a_versioned_fact() -> None:
     events = from_openai_messages([{"role": "user", "content": "hi"}])
-    assert events[0].writes == frozenset({"user_goal:current"})
+    assert events[0].writes == frozenset({"user_goal:current", "conversation:current"})
 
 
 def test_model_message_reads_user_goal() -> None:
@@ -247,3 +252,104 @@ def test_to_openai_messages_raises_on_unsupported_event_type() -> None:
     events = [TraceEvent(id="a", seq=0, type=EventType.STATE_UPDATE)]
     with pytest.raises(UnsupportedMessageFormatError):
         to_openai_messages(events)
+
+
+def test_tool_call_id_colliding_with_a_generated_message_id_raises() -> None:
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("msg_0", "get_weather", "{}")],
+        },
+    ]
+    with pytest.raises(UnsupportedMessageFormatError):
+        from_openai_messages(messages)
+
+
+def test_generated_message_id_colliding_with_an_earlier_tool_call_id_raises() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("msg_1", "get_weather", "{}")],
+        },
+        {"role": "user", "content": "hi"},
+    ]
+    with pytest.raises(UnsupportedMessageFormatError):
+        from_openai_messages(messages)
+
+
+def test_second_user_turn_reads_the_previous_turn_via_conversation_key() -> None:
+    events = from_openai_messages(
+        [
+            {"role": "user", "content": "my name is Alice"},
+            {"role": "assistant", "content": "nice to meet you, Alice"},
+            {"role": "user", "content": "what's my name?"},
+        ]
+    )
+    second_goal = events[-1]
+    assert second_goal.type is EventType.USER_GOAL
+    assert "conversation:current" in second_goal.reads
+
+
+def test_forking_at_a_later_turn_keeps_the_conversational_chain_alive() -> None:
+    events = from_openai_messages(
+        [
+            {"role": "user", "content": "my name is Alice"},
+            {"role": "assistant", "content": "nice to meet you, Alice"},
+            {"role": "user", "content": "what's my name?"},
+        ]
+    )
+    graph = build_causal_graph(events)
+    anchor = events[-1]
+    assert graph.ancestors(anchor.id) == {events[0].id, events[1].id}
+
+
+def test_tool_call_reads_a_leaf_value_nested_inside_a_prior_tool_result() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("call_1", "search_users", "{}")],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": '{"users": [{"id": 123, "name": "Bob"}]}',
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("call_2", "get_user", '{"id": 123}')],
+        },
+    ]
+    events = from_openai_messages(messages)
+    second_call = next(e for e in events if e.id == "call_2")
+    assert any(key.startswith("tool_result:call_1#") for key in second_call.reads)
+
+
+def test_tool_result_with_plain_text_content_round_trips_verbatim() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call("call_1", "run_command", "{}")],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "Operation completed successfully"},
+    ]
+    events = from_openai_messages(messages)
+    rebuilt = to_openai_messages(events)
+    tool_message = next(m for m in rebuilt if m["role"] == "tool")
+    assert tool_message["content"] == "Operation completed successfully"
+
+
+def test_tool_result_with_a_json_object_still_round_trips_as_json() -> None:
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": [tool_call("call_1", "run", "{}")]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"temp": 72}'},
+    ]
+    events = from_openai_messages(messages)
+    rebuilt = to_openai_messages(events)
+    tool_message = next(m for m in rebuilt if m["role"] == "tool")
+    assert tool_message["content"] == '{"temp": 72}'

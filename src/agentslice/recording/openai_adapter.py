@@ -29,6 +29,29 @@ so this adapter has to infer it. The rules, deliberately conservative:
   ``user_goal:current``. This over-approximates on purpose: it never omits
   something the model could plausibly have used, at the cost of limiting
   how much ``tool_result_projection`` can later trim from free-form text.
+- Every event also writes a versioned ``conversation:current`` fact, and
+  every ``user`` message (after the first) reads it. This chains each new
+  user turn to whatever the immediately preceding event was — usually the
+  previous turn's final ``model_message`` — so that forking mid-conversation
+  doesn't strand a follow-up question ("what's my name?") with no causal
+  path back to the turn that actually answers it. It deliberately does
+  *not* chain every event to every other one: only ``user`` messages read
+  it, so a tool call or result that isn't otherwise depended on can still
+  be pruned normally.
+- A ``tool_result`` whose parsed output is a *nested* structure (a dict
+  containing another dict/list, or a list) still writes one opaque key for
+  the whole value, but additionally indexes every leaf value it contains
+  under its own key (``tool_result:{id}#{n}``), so a later ``tool_call``
+  that references, say, a single id buried inside a nested response can
+  still be linked back to it by value match — without this, a value only
+  reachable through nesting was invisible to the read/write matching above
+  and could never establish a causal edge.
+- A ``tool_result`` whose content wasn't valid JSON (or wasn't a JSON
+  object) keeps its verbatim original string in ``metadata["raw_content"]``,
+  so :func:`to_openai_messages` can reproduce it exactly. Without this, a
+  plain-text result like ``"done"`` would round-trip through
+  ``{"result": "done"}`` and back out as a JSON-encoded string instead of
+  the plain text the model actually saw.
 
 An assistant message that carries both ``tool_calls`` and ``content``
 emits only the tool calls; the accompanying content is treated as
@@ -46,6 +69,7 @@ from agentslice.ir.events import EventType, TraceEvent
 
 _USER_GOAL_KEY = "user_goal:current"
 _TOOL_CALL_KEY_PREFIX = "tool_call:"
+_CONVERSATION_KEY = "conversation:current"
 
 
 def tool_call_id_of(event: TraceEvent) -> str:
@@ -112,8 +136,9 @@ def from_openai_messages(
     Raises:
         UnsupportedMessageFormatError: A message is missing ``role``, a
             ``tool`` message's ``tool_call_id`` has no matching prior tool
-            call, a ``tool_call`` id is reused, or a tool call's arguments
-            are not valid JSON.
+            call, a ``tool_call`` id is reused, an event id collides with
+            one generated for a different message, or a tool call's
+            arguments are not valid JSON.
     """
     side_effect_tools = side_effect_tools or set()
 
@@ -122,7 +147,14 @@ def from_openai_messages(
     known_values: dict[str, Any] = {}
     since_last_model_message: set[str] = set()
     call_id_to_tool_name: dict[str, str] = {}
-    seen_tool_call_ids: set[str] = set()
+    seen_event_ids: set[str] = set()
+
+    def claim_event_id(new_id: str, message_index: int) -> None:
+        if new_id in seen_event_ids:
+            raise UnsupportedMessageFormatError(
+                f"message {message_index}: duplicate event id {new_id!r}"
+            )
+        seen_event_ids.add(new_id)
 
     for message_index, message in enumerate(messages):
         role = message.get("role")
@@ -130,25 +162,31 @@ def from_openai_messages(
             raise UnsupportedMessageFormatError(f"message {message_index}: missing 'role'")
 
         if role == "system":
+            event_id = f"msg_{message_index}"
+            claim_event_id(event_id, message_index)
             events.append(
                 TraceEvent(
-                    id=f"msg_{message_index}",
+                    id=event_id,
                     seq=seq,
                     type=EventType.CONSTRAINT,
                     outputs={"content": message.get("content") or ""},
+                    writes=frozenset({_CONVERSATION_KEY}),
                     pinned=True,
                 )
             )
             seq += 1
 
         elif role == "user":
+            event_id = f"msg_{message_index}"
+            claim_event_id(event_id, message_index)
             events.append(
                 TraceEvent(
-                    id=f"msg_{message_index}",
+                    id=event_id,
                     seq=seq,
                     type=EventType.USER_GOAL,
                     outputs={"content": message.get("content") or ""},
-                    writes=frozenset({_USER_GOAL_KEY}),
+                    reads=frozenset({_CONVERSATION_KEY}),
+                    writes=frozenset({_USER_GOAL_KEY, _CONVERSATION_KEY}),
                 )
             )
             seq += 1
@@ -158,11 +196,11 @@ def from_openai_messages(
             if tool_calls:
                 for call in tool_calls:
                     call_id = call["id"]
-                    if call_id in seen_tool_call_ids:
+                    if call_id in seen_event_ids:
                         raise UnsupportedMessageFormatError(
                             f"message {message_index}: duplicate tool_call id {call_id!r}"
                         )
-                    seen_tool_call_ids.add(call_id)
+                    seen_event_ids.add(call_id)
 
                     function = call["function"]
                     tool_name = function["name"]
@@ -190,7 +228,9 @@ def from_openai_messages(
                             tool_name=tool_name,
                             inputs=inputs,
                             reads=frozenset(reads),
-                            writes=frozenset({f"{_TOOL_CALL_KEY_PREFIX}{call_id}"}),
+                            writes=frozenset(
+                                {f"{_TOOL_CALL_KEY_PREFIX}{call_id}", _CONVERSATION_KEY}
+                            ),
                         )
                     )
                     seq += 1
@@ -198,13 +238,16 @@ def from_openai_messages(
                 content = message.get("content")
                 if not content:
                     continue
+                event_id = f"msg_{message_index}"
+                claim_event_id(event_id, message_index)
                 events.append(
                     TraceEvent(
-                        id=f"msg_{message_index}",
+                        id=event_id,
                         seq=seq,
                         type=EventType.MODEL_MESSAGE,
                         outputs={"content": content},
                         reads=frozenset(since_last_model_message | {_USER_GOAL_KEY}),
+                        writes=frozenset({_CONVERSATION_KEY}),
                     )
                 )
                 since_last_model_message = set()
@@ -217,6 +260,8 @@ def from_openai_messages(
                     f"message {message_index}: tool result has no matching tool_call "
                     f"(tool_call_id={call_id!r})"
                 )
+            event_id = f"msg_{message_index}"
+            claim_event_id(event_id, message_index)
             tool_name = call_id_to_tool_name[call_id]
             raw_content = message.get("content") or ""
             parsed: Any = None
@@ -227,9 +272,9 @@ def from_openai_messages(
                     parsed = None
             else:
                 parsed = raw_content
-            outputs: dict[str, Any] = (
-                parsed if isinstance(parsed, dict) else {"result": raw_content}
-            )
+            is_object_result = isinstance(parsed, dict)
+            outputs: dict[str, Any] = parsed if is_object_result else {"result": raw_content}
+            metadata: dict[str, Any] = {} if is_object_result else {"raw_content": raw_content}
 
             writes: set[str] = set()
             if _is_shallow_dict(outputs):
@@ -241,11 +286,17 @@ def from_openai_messages(
                 key = f"tool_result:{call_id}"
                 writes.add(key)
                 known_values[key] = outputs
+                for index, leaf_value in enumerate(_iter_leaf_values(outputs)):
+                    if _is_matchable(leaf_value):
+                        leaf_key = f"{key}#{index}"
+                        writes.add(leaf_key)
+                        known_values[leaf_key] = leaf_value
             since_last_model_message |= writes
+            writes.add(_CONVERSATION_KEY)
 
             events.append(
                 TraceEvent(
-                    id=f"msg_{message_index}",
+                    id=event_id,
                     seq=seq,
                     type=EventType.TOOL_RESULT,
                     tool_name=tool_name,
@@ -253,6 +304,7 @@ def from_openai_messages(
                     reads=frozenset({f"{_TOOL_CALL_KEY_PREFIX}{call_id}"}),
                     writes=frozenset(writes),
                     side_effects=tool_name in side_effect_tools,
+                    metadata=metadata,
                 )
             )
             seq += 1
@@ -323,11 +375,13 @@ def to_openai_messages(events: Sequence[TraceEvent]) -> list[dict[str, Any]]:
                 {"role": "assistant", "content": (event.outputs or {}).get("content", "")}
             )
         elif event.type is EventType.TOOL_RESULT:
+            raw_content = event.metadata.get("raw_content")
+            content = raw_content if raw_content is not None else json.dumps(event.outputs or {})
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call_id_of(event),
-                    "content": json.dumps(event.outputs or {}),
+                    "content": content,
                 }
             )
         else:
