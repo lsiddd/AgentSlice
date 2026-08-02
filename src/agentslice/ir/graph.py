@@ -77,15 +77,21 @@ def build_causal_graph(events: Sequence[TraceEvent]) -> CausalGraph:
 
     Events are reordered by ``seq`` regardless of input order. Raises
     :class:`~agentslice.errors.TraceValidationError` if two events share a
-    ``seq`` value, since that leaves the canonical order ambiguous.
+    ``seq`` value, since that leaves the canonical order ambiguous, or if
+    two events share an ``id``: ``events_by_id`` can only keep one of them,
+    silently mis-attributing facts and edges to whichever survives.
     """
     ordered = sorted(events, key=lambda e: e.seq)
 
     seen_seq: set[int] = set()
+    seen_ids: set[str] = set()
     for event in ordered:
         if event.seq in seen_seq:
             raise TraceValidationError(f"duplicate seq {event.seq} on event {event.id!r}")
         seen_seq.add(event.seq)
+        if event.id in seen_ids:
+            raise TraceValidationError(f"duplicate event id {event.id!r}")
+        seen_ids.add(event.id)
 
     events_by_id = {event.id: event for event in ordered}
     order = [event.id for event in ordered]

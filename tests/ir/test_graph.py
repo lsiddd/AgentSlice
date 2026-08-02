@@ -37,6 +37,13 @@ def test_duplicate_seq_raises_trace_validation_error() -> None:
         build_causal_graph([first, second])
 
 
+def test_duplicate_event_id_raises_trace_validation_error() -> None:
+    first = make_event("dup", seq=0)
+    second = make_event("dup", seq=1)
+    with pytest.raises(TraceValidationError):
+        build_causal_graph([first, second])
+
+
 def test_write_then_read_creates_a_causal_edge() -> None:
     writer = make_event("w", seq=1, writes=frozenset({"x"}), outputs={"x": 1})
     reader = make_event("r", seq=2, reads=frozenset({"x"}))
