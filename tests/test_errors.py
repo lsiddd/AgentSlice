@@ -6,9 +6,11 @@ from agentslice.errors import (
     BudgetNotSatisfiableError,
     CLIUsageError,
     CompilerError,
+    ReplayError,
     TraceError,
     TraceFormatError,
     TraceValidationError,
+    UnknownAnchorError,
     UnknownToolError,
     UnsupportedMessageFormatError,
 )
@@ -25,6 +27,8 @@ from agentslice.errors import (
         (CompilerError, (AgentSliceError,)),
         (UnknownToolError, (CompilerError, AgentSliceError)),
         (BudgetNotSatisfiableError, (CompilerError, AgentSliceError)),
+        (ReplayError, (AgentSliceError,)),
+        (UnknownAnchorError, (CompilerError, ReplayError, AgentSliceError)),
         (CLIUsageError, (AgentSliceError,)),
     ],
 )

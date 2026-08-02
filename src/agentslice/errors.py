@@ -76,5 +76,10 @@ class MissingToolResultError(ReplayError):
     """
 
 
-class UnknownAnchorError(ReplayError):
-    """A fork's ``--at`` event id has no matching event in the given trace."""
+class UnknownAnchorError(CompilerError, ReplayError):
+    """An explicit anchor event id has no matching event in the given trace.
+
+    Shared by compilation and replay because both APIs accept an event id
+    as a semantic continuation point. The dual inheritance preserves the
+    narrower catch boundaries callers already use for either operation.
+    """

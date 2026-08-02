@@ -478,3 +478,4 @@ def test_fork_missing_at_event_exits_2(tmp_path: Path, monkeypatch: pytest.Monke
     result = runner.invoke(app, ["fork", str(trace), "--at", "missing", "--model", "gpt-test"])
 
     assert result.exit_code == 2
+    assert "no event 'missing'" in result.output

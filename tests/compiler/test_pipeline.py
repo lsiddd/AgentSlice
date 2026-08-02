@@ -2,7 +2,7 @@ import pytest
 
 from agentslice.compiler.base import CompilationReport, CompileContext, Pass, PassOutcome
 from agentslice.compiler.pipeline import DEFAULT_PASSES, Pipeline, compile_graph
-from agentslice.errors import BudgetNotSatisfiableError
+from agentslice.errors import BudgetNotSatisfiableError, UnknownAnchorError
 from agentslice.ir.events import EventType, TraceEvent
 from agentslice.ir.graph import CausalGraph, build_causal_graph
 from agentslice.recording.claude_code_adapter import from_claude_code_transcript
@@ -58,6 +58,13 @@ def test_no_budget_leaves_budget_satisfied_none() -> None:
     graph = build_causal_graph([TraceEvent(id="a", seq=0, type=EventType.STATE_UPDATE)])
     result = compile_graph(graph)
     assert result.budget_satisfied is None
+
+
+def test_compile_rejects_unknown_explicit_anchor() -> None:
+    graph = build_causal_graph([TraceEvent(id="a", seq=0, type=EventType.STATE_UPDATE)])
+
+    with pytest.raises(UnknownAnchorError, match="no event with id 'missing'"):
+        compile_graph(graph, anchor_event_id="missing")
 
 
 def test_default_compile_keeps_goal_and_originating_call_for_a_realistic_turn() -> None:

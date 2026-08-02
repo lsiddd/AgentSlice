@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agentslice.compiler.base import CompilationReport, CompileContext, Pass, PassOutcome
 from agentslice.compiler.tokens import estimate_graph_tokens
+from agentslice.errors import UnknownAnchorError
 from agentslice.ir.graph import CausalGraph, build_causal_graph
 
 
@@ -35,6 +36,9 @@ class DeadEventsPass(Pass):
         events = graph.events_in_order()
         tokens_before = estimate_graph_tokens(events)
 
+        if ctx.anchor_event_id is not None and ctx.anchor_event_id not in graph.events:
+            raise UnknownAnchorError(f"no event with id {ctx.anchor_event_id!r}")
+
         if not events:
             report = CompilationReport(
                 pass_name=self.name,
@@ -46,15 +50,10 @@ class DeadEventsPass(Pass):
             return PassOutcome(graph=graph, ctx=ctx, report=report)
 
         anchor_id = ctx.anchor_event_id or events[-1].id
-        anchor = graph.events.get(anchor_id)
-        anchor_seq = anchor.seq if anchor is not None else None
+        anchor_seq = graph.events[anchor_id].seq
 
         alive = {anchor_id} | graph.ancestors(anchor_id)
-        pinned_alive = {
-            event.id
-            for event in events
-            if event.pinned and (anchor_seq is None or event.seq <= anchor_seq)
-        }
+        pinned_alive = {event.id for event in events if event.pinned and event.seq <= anchor_seq}
         for pinned_id in pinned_alive:
             alive |= graph.ancestors(pinned_id)
         alive |= pinned_alive

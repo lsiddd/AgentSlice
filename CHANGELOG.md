@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `compiler.dead_events`: an explicit `anchor_event_id` that does not
+  exist in the graph now raises `UnknownAnchorError` instead of silently
+  pruning relative to an empty root. The error is catchable as both a
+  compiler and replay error because the anchor is a shared continuation
+  criterion across those APIs.
 - `compiler.superseded_state`: mandatory roots are now preserved in full.
   Previously, a pinned event whose writes had all been superseded could be
   removed (or redacted with its pin cleared), violating the retention

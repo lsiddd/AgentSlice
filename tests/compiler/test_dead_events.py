@@ -1,5 +1,8 @@
+import pytest
+
 from agentslice.compiler.base import CompileContext
 from agentslice.compiler.dead_events import DeadEventsPass
+from agentslice.errors import UnknownAnchorError
 from agentslice.ir.events import EventType, TraceEvent
 from agentslice.ir.graph import build_causal_graph
 
@@ -80,3 +83,17 @@ def test_empty_graph_is_a_no_op() -> None:
     outcome = DeadEventsPass().apply(graph, CompileContext())
     assert outcome.graph.events == {}
     assert outcome.report.events_before == 0
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [],
+        [TraceEvent(id="present", seq=0, type=EventType.STATE_UPDATE)],
+    ],
+)
+def test_unknown_explicit_anchor_is_rejected(events: list[TraceEvent]) -> None:
+    graph = build_causal_graph(events)
+
+    with pytest.raises(UnknownAnchorError, match="no event with id 'missing'"):
+        DeadEventsPass().apply(graph, CompileContext(anchor_event_id="missing"))
