@@ -7,6 +7,7 @@ from agentslice.compiler import (
     Pass,
     PassOutcome,
     Pipeline,
+    ToolEffect,
     ToolSchema,
     compile_graph,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "from_openai_messages",
     "LiveSession",
     "ToolSchema",
+    "ToolEffect",
     "CompileContext",
     "CompilationReport",
     "CompiledContext",

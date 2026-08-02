@@ -161,6 +161,160 @@ def test_compile_strict_schema_unknown_tool_exits_4(tmp_path: Path) -> None:
     assert result.exit_code == 4
 
 
+def test_compile_rejects_invalid_tool_effect_classification(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    with TraceWriter(trace) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+    tools = tmp_path / "tools.json"
+    tools.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "function",
+                    "effects": "probably-pure",
+                    "function": {"name": "get_weather"},
+                }
+            ]
+        )
+    )
+
+    result = runner.invoke(app, ["compile", str(trace), "--tools", str(tools)])
+
+    assert result.exit_code == 2
+    assert "malformed tool definition" in result.output
+
+
+def test_compile_rejects_unknown_experimental_pass(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    with TraceWriter(trace) as writer:
+        writer.write(TraceEvent(id="a", seq=0, type=EventType.USER_GOAL))
+
+    result = runner.invoke(
+        app,
+        ["compile", str(trace), "--enable-pass", "made_up"],
+    )
+
+    assert result.exit_code == 2
+    assert "unsupported --enable-pass" in result.output
+
+
+def test_compile_can_enable_failed_hypothesis_folding(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    events = [
+        TraceEvent(
+            id="m1",
+            seq=0,
+            type=EventType.MODEL_MESSAGE,
+            outputs={"content": "Maybe expired"},
+            writes=frozenset({"conversation:current"}),
+        ),
+        TraceEvent(
+            id="c1",
+            seq=1,
+            type=EventType.TOOL_CALL,
+            tool_name="check_token",
+            writes=frozenset({"tool_call:c1", "conversation:current"}),
+        ),
+        TraceEvent(
+            id="r1",
+            seq=2,
+            type=EventType.TOOL_RESULT,
+            tool_name="check_token",
+            outputs={"valid": True},
+            reads=frozenset({"tool_call:c1"}),
+            writes=frozenset({"tool_result:c1", "conversation:current"}),
+        ),
+        TraceEvent(
+            id="m2",
+            seq=3,
+            type=EventType.MODEL_MESSAGE,
+            outputs={"content": "Ruled out"},
+            reads=frozenset({"tool_result:c1"}),
+            writes=frozenset({"conversation:current"}),
+            metadata={
+                "agentslice": {
+                    "fold": {
+                        "schema_version": 1,
+                        "fold_id": "fh_token",
+                        "kind": "ruled_out_hypothesis",
+                        "hypothesis": {
+                            "text": "The token expired",
+                            "source_event_id": "m1",
+                        },
+                        "evidence": [
+                            {
+                                "event_id": "r1",
+                                "json_pointer": "/valid",
+                                "operator": "==",
+                                "value": True,
+                            }
+                        ],
+                        "remove_event_ids": ["m1", "c1", "r1", "m2"],
+                        "conclusion_event_ids": ["m2"],
+                        "dedicated_conclusion": True,
+                        "annotator": {
+                            "kind": "runtime",
+                            "name": "test",
+                            "version": "1",
+                        },
+                    }
+                }
+            },
+        ),
+        TraceEvent(
+            id="anchor",
+            seq=4,
+            type=EventType.USER_GOAL,
+            outputs={"content": "What should we try next?"},
+            reads=frozenset({"conversation:current"}),
+            writes=frozenset({"conversation:current", "user_goal:current"}),
+        ),
+    ]
+    with TraceWriter(trace) as writer:
+        for event in events:
+            writer.write(event)
+    tools = tmp_path / "tools.json"
+    tools.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "function",
+                    "effects": "pure",
+                    "function": {"name": "check_token"},
+                }
+            ]
+        )
+    )
+    output = tmp_path / "compiled.jsonl"
+
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            str(trace),
+            "--tools",
+            str(tools),
+            "--enable-pass",
+            "failed_hypothesis_folding",
+            "-o",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    compiled = output.read_text()
+    assert '"id":"fold_fh_token"' in compiled
+    assert '"type":"state_update"' in compiled
+    assert '"id":"c1"' not in compiled
+    report = json.loads(Path(f"{output}.report.json").read_text())
+    assert [entry["pass_name"] for entry in report[:3]] == [
+        "constraint_pinning",
+        "fold_annotation_resolution",
+        "failed_hypothesis_folding",
+    ]
+    assert report[2]["added_event_ids"] == ["fold_fh_token"]
+
+
 def test_diff_reports_removed_and_kept_events(tmp_path: Path) -> None:
     original = tmp_path / "original.jsonl"
     compiled = tmp_path / "compiled.jsonl"
@@ -193,6 +347,54 @@ def test_diff_json_format(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["events"] == [{"id": "a", "status": "kept"}]
+
+
+def test_diff_reports_synthetic_events_as_added(tmp_path: Path) -> None:
+    original = tmp_path / "original.jsonl"
+    compiled = tmp_path / "compiled.jsonl"
+    report = tmp_path / "report.json"
+    original_event = TraceEvent(id="a", seq=0, type=EventType.MODEL_MESSAGE)
+    synthetic = TraceEvent(id="fold_x", seq=1, type=EventType.STATE_UPDATE)
+    with TraceWriter(original) as writer:
+        writer.write(original_event)
+    with TraceWriter(compiled) as writer:
+        writer.write(original_event)
+        writer.write(synthetic)
+    report.write_text(
+        json.dumps(
+            [
+                {
+                    "pass_name": "failed_hypothesis_folding",
+                    "events_before": 1,
+                    "events_after": 2,
+                    "tokens_before": 1,
+                    "tokens_after": 2,
+                    "added_event_ids": ["fold_x"],
+                }
+            ]
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            str(original),
+            str(compiled),
+            "--report",
+            str(report),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["events"][-1] == {
+        "id": "fold_x",
+        "status": "added",
+        "pass": "failed_hypothesis_folding",
+    }
 
 
 def test_diff_invalid_format_exits_2(tmp_path: Path) -> None:

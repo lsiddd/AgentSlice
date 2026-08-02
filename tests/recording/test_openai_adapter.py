@@ -254,6 +254,75 @@ def test_to_openai_messages_raises_on_unsupported_event_type() -> None:
         to_openai_messages(events)
 
 
+def test_to_openai_messages_lowers_epistemic_state_v1_to_canonical_assistant_json() -> None:
+    events = [
+        TraceEvent(
+            id="fold_fh_token_expired",
+            seq=0,
+            type=EventType.STATE_UPDATE,
+            outputs={
+                "kind": "epistemic_state",
+                "schema_version": 1,
+                "ruled_out": [
+                    {
+                        "fold_id": "fh_token_expired",
+                        "hypothesis": "O token expirou",
+                        "evidence": [
+                            {
+                                "event_id": "r1",
+                                "json_pointer": "/valid",
+                                "operator": "==",
+                                "value": True,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    ]
+    assert to_openai_messages(events) == [
+        {
+            "role": "assistant",
+            "content": (
+                '{"_agentslice":{"kind":"epistemic_state","version":1},'
+                '"ruled_out":[{"evidence":[{"event_id":"r1","json_pointer":"/valid",'
+                '"operator":"==","value":true}],"fold_id":"fh_token_expired",'
+                '"hypothesis":"O token expirou"}]}'
+            ),
+        }
+    ]
+
+
+def test_to_openai_messages_rejects_unknown_epistemic_state_version() -> None:
+    events = [
+        TraceEvent(
+            id="future",
+            seq=0,
+            type=EventType.STATE_UPDATE,
+            outputs={"kind": "epistemic_state", "schema_version": 2, "ruled_out": []},
+        )
+    ]
+    with pytest.raises(UnsupportedMessageFormatError, match="unsupported state_update subtype"):
+        to_openai_messages(events)
+
+
+def test_to_openai_messages_rejects_malformed_epistemic_state_payload() -> None:
+    events = [
+        TraceEvent(
+            id="malformed",
+            seq=0,
+            type=EventType.STATE_UPDATE,
+            outputs={
+                "kind": "epistemic_state",
+                "schema_version": 1,
+                "ruled_out": [{"hypothesis": "missing fold id and evidence"}],
+            },
+        )
+    ]
+    with pytest.raises(UnsupportedMessageFormatError, match="unsupported state_update subtype"):
+        to_openai_messages(events)
+
+
 def test_tool_call_id_colliding_with_a_generated_message_id_raises() -> None:
     messages = [
         {"role": "user", "content": "hi"},

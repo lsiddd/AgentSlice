@@ -14,6 +14,10 @@ from agentslice.compiler.base import (
 from agentslice.compiler.constraint_pinning import ConstraintPinningPass
 from agentslice.compiler.dead_events import DeadEventsPass
 from agentslice.compiler.duplicate_result_elimination import DuplicateResultEliminationPass
+from agentslice.compiler.failed_hypothesis_folding import (
+    FailedHypothesisFoldingPass,
+    FoldAnnotationResolutionPass,
+)
 from agentslice.compiler.schema_pruning import SchemaPruningPass
 from agentslice.compiler.superseded_state import SupersededStatePass
 from agentslice.compiler.tokens import estimate_graph_tokens
@@ -28,6 +32,13 @@ DEFAULT_PASSES: tuple[Pass, ...] = (
     DuplicateResultEliminationPass(),
     ToolResultProjectionPass(),
     SchemaPruningPass(),
+)
+
+EXPERIMENTAL_FAILED_HYPOTHESIS_FOLDING_PASSES: tuple[Pass, ...] = (
+    DEFAULT_PASSES[0],
+    FoldAnnotationResolutionPass(),
+    FailedHypothesisFoldingPass(),
+    *DEFAULT_PASSES[1:],
 )
 
 
@@ -84,6 +95,7 @@ def compile_graph(
     strict: bool = False,
     strict_schema: bool = False,
     anchor_event_id: str | None = None,
+    accepted_fold_annotators: frozenset[str] | None = None,
 ) -> CompiledContext:
     """Compile ``graph`` into a :class:`~agentslice.compiler.base.CompiledContext`.
 
@@ -96,5 +108,10 @@ def compile_graph(
         strict=strict,
         strict_schema=strict_schema,
         anchor_event_id=anchor_event_id,
+        accepted_fold_annotators=(
+            accepted_fold_annotators
+            if accepted_fold_annotators is not None
+            else frozenset({"runtime", "human"})
+        ),
     )
     return Pipeline(passes).run(graph, ctx)

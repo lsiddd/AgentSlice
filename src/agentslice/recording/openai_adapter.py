@@ -64,12 +64,12 @@ import json
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from agentslice.errors import UnsupportedMessageFormatError
-from agentslice.ir.events import EventType, TraceEvent
+from pydantic import ValidationError
 
-_USER_GOAL_KEY = "user_goal:current"
-_TOOL_CALL_KEY_PREFIX = "tool_call:"
-_CONVERSATION_KEY = "conversation:current"
+from agentslice.errors import UnsupportedMessageFormatError
+from agentslice.ir.epistemic import EpistemicStateV1
+from agentslice.ir.events import EventType, TraceEvent
+from agentslice.ir.keys import CONVERSATION_KEY, TOOL_CALL_KEY_PREFIX, USER_GOAL_KEY
 
 
 def tool_call_id_of(event: TraceEvent) -> str:
@@ -84,8 +84,8 @@ def tool_call_id_of(event: TraceEvent) -> str:
             (hand-built, or recorded before the fix that added it).
     """
     for key in event.reads:
-        if key.startswith(_TOOL_CALL_KEY_PREFIX):
-            return key[len(_TOOL_CALL_KEY_PREFIX) :]
+        if key.startswith(TOOL_CALL_KEY_PREFIX):
+            return key[len(TOOL_CALL_KEY_PREFIX) :]
     raise UnsupportedMessageFormatError(
         f"event {event.id!r} has no 'tool_call:<id>' read; cannot recover its tool_call_id"
     )
@@ -170,7 +170,7 @@ def from_openai_messages(
                     seq=seq,
                     type=EventType.CONSTRAINT,
                     outputs={"content": message.get("content") or ""},
-                    writes=frozenset({_CONVERSATION_KEY}),
+                    writes=frozenset({CONVERSATION_KEY}),
                     pinned=True,
                 )
             )
@@ -185,8 +185,8 @@ def from_openai_messages(
                     seq=seq,
                     type=EventType.USER_GOAL,
                     outputs={"content": message.get("content") or ""},
-                    reads=frozenset({_CONVERSATION_KEY}),
-                    writes=frozenset({_USER_GOAL_KEY, _CONVERSATION_KEY}),
+                    reads=frozenset({CONVERSATION_KEY}),
+                    writes=frozenset({USER_GOAL_KEY, CONVERSATION_KEY}),
                 )
             )
             seq += 1
@@ -219,7 +219,7 @@ def from_openai_messages(
                         if _is_matchable(value)
                         and any(value == leaf for leaf in _iter_leaf_values(inputs))
                     }
-                    reads.add(_USER_GOAL_KEY)
+                    reads.add(USER_GOAL_KEY)
                     events.append(
                         TraceEvent(
                             id=call_id,
@@ -229,7 +229,7 @@ def from_openai_messages(
                             inputs=inputs,
                             reads=frozenset(reads),
                             writes=frozenset(
-                                {f"{_TOOL_CALL_KEY_PREFIX}{call_id}", _CONVERSATION_KEY}
+                                {f"{TOOL_CALL_KEY_PREFIX}{call_id}", CONVERSATION_KEY}
                             ),
                         )
                     )
@@ -246,8 +246,8 @@ def from_openai_messages(
                         seq=seq,
                         type=EventType.MODEL_MESSAGE,
                         outputs={"content": content},
-                        reads=frozenset(since_last_model_message | {_USER_GOAL_KEY}),
-                        writes=frozenset({_CONVERSATION_KEY}),
+                        reads=frozenset(since_last_model_message | {USER_GOAL_KEY}),
+                        writes=frozenset({CONVERSATION_KEY}),
                     )
                 )
                 since_last_model_message = set()
@@ -292,7 +292,7 @@ def from_openai_messages(
                         writes.add(leaf_key)
                         known_values[leaf_key] = leaf_value
             since_last_model_message |= writes
-            writes.add(_CONVERSATION_KEY)
+            writes.add(CONVERSATION_KEY)
 
             events.append(
                 TraceEvent(
@@ -301,7 +301,7 @@ def from_openai_messages(
                     type=EventType.TOOL_RESULT,
                     tool_name=tool_name,
                     outputs=outputs,
-                    reads=frozenset({f"{_TOOL_CALL_KEY_PREFIX}{call_id}"}),
+                    reads=frozenset({f"{TOOL_CALL_KEY_PREFIX}{call_id}"}),
                     writes=frozenset(writes),
                     side_effects=tool_name in side_effect_tools,
                     metadata=metadata,
@@ -315,6 +315,28 @@ def from_openai_messages(
             )
 
     return events
+
+
+def _lower_epistemic_state(event: TraceEvent) -> dict[str, Any]:
+    try:
+        state = EpistemicStateV1.model_validate(event.outputs or {})
+    except ValidationError as exc:
+        raise UnsupportedMessageFormatError(
+            f"event {event.id!r}: unsupported state_update subtype"
+        ) from exc
+    payload = {
+        "_agentslice": {"kind": "epistemic_state", "version": 1},
+        "ruled_out": [hypothesis.model_dump() for hypothesis in state.ruled_out],
+    }
+    return {
+        "role": "assistant",
+        "content": json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    }
 
 
 def to_openai_messages(events: Sequence[TraceEvent]) -> list[dict[str, Any]]:
@@ -336,9 +358,9 @@ def to_openai_messages(events: Sequence[TraceEvent]) -> list[dict[str, Any]]:
 
     Raises:
         UnsupportedMessageFormatError: An event's type has no OpenAI
-            message equivalent (``state_update``, ``error``,
-            ``final_output``), or a ``tool_result`` predates the
-            ``tool_call:{id}`` linkage :func:`tool_call_id_of` relies on.
+            message equivalent, a ``state_update`` is not the supported
+            ``epistemic_state.v1`` subtype, or a ``tool_result`` predates
+            the ``tool_call:{id}`` linkage :func:`tool_call_id_of` relies on.
     """
     messages: list[dict[str, Any]] = []
     pending_tool_calls: list[dict[str, Any]] = []
@@ -384,6 +406,8 @@ def to_openai_messages(events: Sequence[TraceEvent]) -> list[dict[str, Any]]:
                     "content": content,
                 }
             )
+        elif event.type is EventType.STATE_UPDATE:
+            messages.append(_lower_epistemic_state(event))
         else:
             raise UnsupportedMessageFormatError(
                 f"event {event.id!r}: {event.type} has no OpenAI message equivalent"

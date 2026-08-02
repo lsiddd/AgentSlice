@@ -1,4 +1,10 @@
-from agentslice.compiler.base import CompilationReport, CompileContext, CompiledContext, ToolSchema
+from agentslice.compiler.base import (
+    CompilationReport,
+    CompileContext,
+    CompiledContext,
+    ToolEffect,
+    ToolSchema,
+)
 from agentslice.ir.events import EventType, TraceEvent
 
 
@@ -9,12 +15,15 @@ def test_compile_context_defaults() -> None:
     assert ctx.strict is False
     assert ctx.strict_schema is False
     assert ctx.anchor_event_id is None
+    assert ctx.fold_plans == ()
+    assert ctx.accepted_fold_annotators == frozenset({"runtime", "human"})
 
 
 def test_tool_schema_defaults() -> None:
     schema = ToolSchema(name="get_weather")
     assert schema.description == ""
     assert schema.parameters == {}
+    assert schema.effects is ToolEffect.UNKNOWN
 
 
 def test_compilation_report_list_fields_default_empty() -> None:
@@ -23,6 +32,7 @@ def test_compilation_report_list_fields_default_empty() -> None:
     )
     assert report.removed_event_ids == []
     assert report.modified_event_ids == []
+    assert report.added_event_ids == []
     assert report.pinned_event_ids == []
     assert report.notes == []
 

@@ -4,19 +4,31 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentslice.compiler.fold_plans import FoldPlan
 from agentslice.ir.events import TraceEvent
 from agentslice.ir.graph import CausalGraph
 
 
+class ToolEffect(StrEnum):
+    """Whether invoking a tool is known to mutate state outside the trace."""
+
+    PURE = "pure"
+    EFFECTFUL = "effectful"
+    UNKNOWN = "unknown"
+
+
 class ToolSchema(BaseModel):
-    """A tool's name, description, and parameter schema.
+    """A tool's name, parameter schema, and explicit effect classification.
 
     Mirrors the shape of an OpenAI-style ``function`` tool definition
-    closely enough to build a catalog directly from one.
+    closely enough to build a catalog directly from one. ``effects``
+    deliberately defaults to ``unknown`` rather than assuming that a tool
+    is pure because nobody marked it as side-effecting.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -24,6 +36,7 @@ class ToolSchema(BaseModel):
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
+    effects: ToolEffect = ToolEffect.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -40,6 +53,10 @@ class CompileContext:
     strict: bool = False
     strict_schema: bool = False
     anchor_event_id: str | None = None
+    accepted_fold_annotators: frozenset[str] = field(
+        default_factory=lambda: frozenset({"runtime", "human"})
+    )
+    fold_plans: tuple[FoldPlan, ...] = ()
 
 
 class CompilationReport(BaseModel):
@@ -54,6 +71,7 @@ class CompilationReport(BaseModel):
     tokens_after: int
     removed_event_ids: list[str] = Field(default_factory=list)
     modified_event_ids: list[str] = Field(default_factory=list)
+    added_event_ids: list[str] = Field(default_factory=list)
     pinned_event_ids: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 

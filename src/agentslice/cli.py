@@ -10,12 +10,17 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
 from agentslice.__about__ import __version__
 from agentslice.compiler.base import CompiledContext, ToolSchema
-from agentslice.compiler.pipeline import compile_graph
+from agentslice.compiler.pipeline import (
+    DEFAULT_PASSES,
+    EXPERIMENTAL_FAILED_HYPOTHESIS_FOLDING_PASSES,
+    compile_graph,
+)
 from agentslice.errors import (
     AdapterError,
     AgentSliceError,
@@ -173,8 +178,9 @@ def _parse_tool_catalog(raw: Any) -> dict[str, ToolSchema]:
                 name=function["name"],
                 description=function.get("description", ""),
                 parameters=function.get("parameters", {}),
+                effects=item.get("effects", "unknown"),
             )
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, ValidationError) as exc:
             raise CLIUsageError(f"malformed tool definition: {exc}") from exc
         catalog[schema.name] = schema
     return catalog
@@ -222,7 +228,7 @@ def compile_cmd(
         typer.Option("--tools", exists=True, readable=True, help="JSON file with a tools array."),
     ] = None,
     strict: Annotated[
-        bool, typer.Option("--strict", help="Fail if the token budget isn't met after every pass.")
+        bool, typer.Option("--strict", help="Fail if the token budget isn't met after all passes.")
     ] = False,
     strict_schema: Annotated[
         bool, typer.Option("--strict-schema", help="Fail if a used tool has no entry in --tools.")
@@ -231,11 +237,22 @@ def compile_cmd(
         Path | None,
         typer.Option("--report", help="Where to write the per-pass compilation report."),
     ] = None,
+    enable_pass: Annotated[
+        str | None,
+        typer.Option(
+            "--enable-pass",
+            help="Enable an experimental pass. Supported: failed_hypothesis_folding.",
+        ),
+    ] = None,
 ) -> None:
     """Compile a trace into the smallest context that preserves its causal state."""
     verbose = ctx.obj["verbose"]
 
     def run() -> None:
+        if enable_pass not in (None, "failed_hypothesis_folding"):
+            raise CLIUsageError(
+                f"unsupported --enable-pass {enable_pass!r}: expected 'failed_hypothesis_folding'"
+            )
         events = TraceReader(trace).read_all()
         graph = build_causal_graph(events)
 
@@ -251,6 +268,11 @@ def compile_cmd(
             graph,
             budget_tokens=budget,
             tool_catalog=tool_catalog,
+            passes=(
+                EXPERIMENTAL_FAILED_HYPOTHESIS_FOLDING_PASSES
+                if enable_pass == "failed_hypothesis_folding"
+                else DEFAULT_PASSES
+            ),
             strict=strict,
             strict_schema=strict_schema,
         )
@@ -336,6 +358,11 @@ def diff(
             else:
                 status = "kept"
             rows.append({"id": event_id, "status": status})
+        rows.extend(
+            {"id": event_id, "status": "added"}
+            for event_id in compiled_events
+            if event_id not in original_events
+        )
 
         token_deltas: list[dict[str, Any]] = []
         if report is not None:
@@ -345,6 +372,7 @@ def diff(
                 changed_ids = [
                     *entry.get("removed_event_ids", []),
                     *entry.get("modified_event_ids", []),
+                    *entry.get("added_event_ids", []),
                 ]
                 for event_id in changed_ids:
                     pass_by_event[event_id] = entry["pass_name"]
@@ -356,7 +384,7 @@ def diff(
                     }
                 )
             for row in rows:
-                if row["status"] in ("removed", "modified") and row["id"] in pass_by_event:
+                if row["status"] in ("removed", "modified", "added") and row["id"] in pass_by_event:
                     row["pass"] = pass_by_event[row["id"]]
 
         if format == "json":
