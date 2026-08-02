@@ -10,3 +10,8 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# internal operating notes — never committed
+/NEXT_STEPS.md
+/CLAUDE.md
+/AGENTS.md
