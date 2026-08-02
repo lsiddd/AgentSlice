@@ -135,3 +135,10 @@ def test_causal_compile_policy_respects_a_token_budget() -> None:
     tight = CausalCompilePolicy(budget_tokens=1).build_request(events, _TOOL_CATALOG)
     loose = CausalCompilePolicy(budget_tokens=None).build_request(events, _TOOL_CATALOG)
     assert tight.tokens <= loose.tokens
+
+
+def test_causal_compile_policy_still_offers_every_tool_before_any_is_used() -> None:
+    first_turn_events = from_openai_messages(_MESSAGES[:1])
+    request = CausalCompilePolicy().build_request(first_turn_events, _TOOL_CATALOG)
+    assert request.tools is not None
+    assert request.tools[0]["function"]["name"] == "add"

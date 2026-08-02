@@ -210,7 +210,17 @@ class LLMSummaryPolicy:
 
 @dataclass(frozen=True)
 class CausalCompilePolicy:
-    """AgentSlice's own default pipeline: causal compilation up to the current point."""
+    """AgentSlice's own default pipeline: causal compilation up to the current point.
+
+    Offers the model the full, unnarrowed `tool_catalog`, not
+    `compiled.tool_catalog`. `schema_pruning` narrows the catalog to tools
+    *already used* in the survived graph, which is the right question to
+    ask about a completed trace but the wrong one here: at the start of a
+    turn nothing has been called yet, so the narrowed catalog is routinely
+    empty and a model offered zero tools can never call one. Message
+    compaction (`compiled.events`/`tokens_after`) is unaffected — only
+    which tools the model is told it can call next.
+    """
 
     budget_tokens: int | None = None
     name: str = "causal_compile"
@@ -229,6 +239,6 @@ class CausalCompilePolicy:
         )
         return ContextRequest(
             messages=to_openai_messages(compiled.events),
-            tools=_tools_payload(compiled.tool_catalog),
+            tools=_tools_payload(tool_catalog),
             tokens=compiled.tokens_after,
         )
