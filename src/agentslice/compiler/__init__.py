@@ -9,6 +9,7 @@ from agentslice.compiler.base import (
 from agentslice.compiler.constraint_pinning import ConstraintPinningPass
 from agentslice.compiler.dead_events import DeadEventsPass
 from agentslice.compiler.superseded_state import SupersededStatePass
+from agentslice.compiler.tool_result_projection import ToolResultProjectionPass
 
 __all__ = [
     "ToolSchema",
@@ -20,4 +21,5 @@ __all__ = [
     "ConstraintPinningPass",
     "DeadEventsPass",
     "SupersededStatePass",
+    "ToolResultProjectionPass",
 ]
