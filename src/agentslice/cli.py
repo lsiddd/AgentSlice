@@ -405,6 +405,7 @@ _API_KEY_ENV_OPTION = typer.Option(
 _TOOLS_OPTION = typer.Option(
     "--tools", exists=True, readable=True, help="JSON file with an OpenAI-style tools array."
 )
+_TIMEOUT_OPTION = typer.Option("--timeout", help="Seconds to wait for the model's response.")
 
 
 @app.command()
@@ -429,6 +430,7 @@ def replay(
     base_url: Annotated[str, _BASE_URL_OPTION] = "https://openrouter.ai/api/v1",
     api_key_env: Annotated[str, _API_KEY_ENV_OPTION] = "OPENROUTER_API_KEY",
     tools: Annotated[Path | None, _TOOLS_OPTION] = None,
+    timeout: Annotated[float, _TIMEOUT_OPTION] = 120.0,
 ) -> None:
     """Resend a compiled trace to a real model and compare its next action to the original.
 
@@ -445,7 +447,7 @@ def replay(
         original_events = TraceReader(compare_with).read_all()
         tool_catalog = _load_tool_catalog(tools)
 
-        with ReplaySession(base_url, api_key, model=model) as session:
+        with ReplaySession(base_url, api_key, model=model, timeout=timeout) as session:
             replayed = replay_compiled_context(
                 events,
                 original_events=original_events,
@@ -481,6 +483,7 @@ def fork(
     base_url: Annotated[str, _BASE_URL_OPTION] = "https://openrouter.ai/api/v1",
     api_key_env: Annotated[str, _API_KEY_ENV_OPTION] = "OPENROUTER_API_KEY",
     tools: Annotated[Path | None, _TOOLS_OPTION] = None,
+    timeout: Annotated[float, _TIMEOUT_OPTION] = 120.0,
 ) -> None:
     """Fork a trace at an event, compile the causal context up to it, and replay it to a model."""
     verbose = ctx.obj["verbose"]
@@ -501,7 +504,7 @@ def fork(
             graph, budget_tokens=budget, tool_catalog=tool_catalog, anchor_event_id=at
         )
 
-        with ReplaySession(base_url, api_key, model=model) as session:
+        with ReplaySession(base_url, api_key, model=model, timeout=timeout) as session:
             replayed = replay_compiled_context(
                 compiled.events,
                 original_events=original_events,

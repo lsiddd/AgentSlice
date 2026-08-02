@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a final text answer), against what the original trace actually did
   next.
 - CLI: `agentslice replay` and `agentslice fork` commands.
+- `recording.claude_code_adapter.from_claude_code_transcript` and
+  `recording.codex_adapter.from_codex_rollout`: adapters for Claude Code
+  session transcripts and Codex CLI rollouts, both reshaping into
+  OpenAI-compatible messages and delegating to `from_openai_messages`
+  rather than re-implementing causal inference. `agentslice record --format
+  claude-code|codex` reads the corresponding JSON Lines log directly.
+- `ReplaySession`/`LiveSession` now accept a `timeout` (default 120s,
+  `httpx`'s own default of 5s was too short for a reasoning model).
 
 ## [0.1.0] - 2026-08-02
 

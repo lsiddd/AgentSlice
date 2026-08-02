@@ -22,7 +22,9 @@ class ReplaySession:
     transport-injection pattern (tests use ``httpx.MockTransport``), but
     unlike that class this session never records a trace of what happens —
     it exists to observe one next action for comparison, not to build a
-    new one. Synchronous, non-streaming, no retries.
+    new one. Synchronous, non-streaming, no retries. ``timeout`` defaults
+    to a generous 120s: a reasoning model can easily take longer than
+    ``httpx``'s 5s default before returning anything.
     """
 
     def __init__(
@@ -32,12 +34,14 @@ class ReplaySession:
         *,
         model: str,
         transport: httpx.BaseTransport | None = None,
+        timeout: float = 120.0,
     ) -> None:
         self._model = model
         self._client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
             transport=transport,
+            timeout=timeout,
         )
 
     def next_action(

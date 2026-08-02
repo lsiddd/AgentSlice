@@ -24,7 +24,9 @@ class LiveSession:
     turn.
 
     ``transport`` exists so tests can inject an ``httpx.MockTransport``
-    instead of hitting a real API.
+    instead of hitting a real API. ``timeout`` defaults to a generous
+    120s: a reasoning model can easily take longer than ``httpx``'s 5s
+    default before returning anything.
     """
 
     def __init__(
@@ -35,6 +37,7 @@ class LiveSession:
         model: str,
         transport: httpx.BaseTransport | None = None,
         side_effect_tools: set[str] | None = None,
+        timeout: float = 120.0,
     ) -> None:
         self._model = model
         self._side_effect_tools = side_effect_tools
@@ -43,6 +46,7 @@ class LiveSession:
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
             transport=transport,
+            timeout=timeout,
         )
 
     def run_turn(
