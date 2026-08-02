@@ -12,6 +12,7 @@ from agentslice.compiler.base import (
     ToolSchema,
 )
 from agentslice.compiler.constraint_pinning import ConstraintPinningPass
+from agentslice.compiler.current_turn_retention import CurrentTurnRetentionPass
 from agentslice.compiler.dead_events import DeadEventsPass
 from agentslice.compiler.duplicate_result_elimination import DuplicateResultEliminationPass
 from agentslice.compiler.failed_hypothesis_folding import (
@@ -27,6 +28,7 @@ from agentslice.ir.graph import CausalGraph
 
 DEFAULT_PASSES: tuple[Pass, ...] = (
     ConstraintPinningPass(),
+    CurrentTurnRetentionPass(),
     DeadEventsPass(),
     SupersededStatePass(),
     DuplicateResultEliminationPass(),
@@ -36,9 +38,10 @@ DEFAULT_PASSES: tuple[Pass, ...] = (
 
 EXPERIMENTAL_FAILED_HYPOTHESIS_FOLDING_PASSES: tuple[Pass, ...] = (
     DEFAULT_PASSES[0],
+    DEFAULT_PASSES[1],
     FoldAnnotationResolutionPass(),
     FailedHypothesisFoldingPass(),
-    *DEFAULT_PASSES[1:],
+    *DEFAULT_PASSES[2:],
 )
 
 

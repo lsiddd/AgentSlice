@@ -307,12 +307,13 @@ def test_compile_can_enable_failed_hypothesis_folding(tmp_path: Path) -> None:
     assert '"type":"state_update"' in compiled
     assert '"id":"c1"' not in compiled
     report = json.loads(Path(f"{output}.report.json").read_text())
-    assert [entry["pass_name"] for entry in report[:3]] == [
+    assert [entry["pass_name"] for entry in report[:4]] == [
         "constraint_pinning",
+        "current_turn_retention",
         "fold_annotation_resolution",
         "failed_hypothesis_folding",
     ]
-    assert report[2]["added_event_ids"] == ["fold_fh_token"]
+    assert report[3]["added_event_ids"] == ["fold_fh_token"]
 
 
 def test_diff_reports_removed_and_kept_events(tmp_path: Path) -> None:

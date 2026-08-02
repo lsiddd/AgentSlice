@@ -11,11 +11,12 @@ projected); the other four are what get compared against it.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from agentslice.compiler.base import ToolSchema
-from agentslice.compiler.pipeline import compile_graph
+from agentslice.compiler.base import Pass, ToolSchema
+from agentslice.compiler.pipeline import DEFAULT_PASSES, compile_graph
 from agentslice.compiler.tokens import estimate_graph_tokens, estimate_tokens
 from agentslice.ir.events import EventType, TraceEvent
 from agentslice.ir.graph import build_causal_graph
@@ -220,9 +221,15 @@ class CausalCompilePolicy:
     empty and a model offered zero tools can never call one. Message
     compaction (`compiled.events`/`tokens_after`) is unaffected — only
     which tools the model is told it can call next.
+
+    `passes` defaults to `DEFAULT_PASSES`; overriding it lets the benchmark
+    compare experimental pipelines (e.g. a candidate pass not yet promoted
+    to the library default) against the shipped one without duplicating
+    this class.
     """
 
     budget_tokens: int | None = None
+    passes: Sequence[Pass] | None = None
     name: str = "causal_compile"
 
     def build_request(
@@ -236,6 +243,7 @@ class CausalCompilePolicy:
             budget_tokens=self.budget_tokens,
             tool_catalog=tool_catalog,
             anchor_event_id=anchor_event_id,
+            passes=self.passes or DEFAULT_PASSES,
         )
         return ContextRequest(
             messages=to_openai_messages(compiled.events),

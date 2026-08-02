@@ -5,7 +5,7 @@ from agentslice.compiler.base import ToolSchema
 from agentslice.compiler.pipeline import compile_graph
 from agentslice.ir.events import TraceEvent
 from agentslice.ir.graph import build_causal_graph
-from agentslice.recording.openai_adapter import from_openai_messages
+from agentslice.recording.openai_adapter import from_openai_messages, to_openai_messages
 from benchmarks.policies import (
     CausalCompilePolicy,
     FullTracePolicy,
@@ -135,6 +135,12 @@ def test_causal_compile_policy_respects_a_token_budget() -> None:
     tight = CausalCompilePolicy(budget_tokens=1).build_request(events, _TOOL_CATALOG)
     loose = CausalCompilePolicy(budget_tokens=None).build_request(events, _TOOL_CATALOG)
     assert tight.tokens <= loose.tokens
+
+
+def test_causal_compile_policy_accepts_a_custom_pass_sequence() -> None:
+    events = _events()
+    request = CausalCompilePolicy(passes=()).build_request(events, _TOOL_CATALOG)
+    assert request.messages == to_openai_messages(events)
 
 
 def test_causal_compile_policy_still_offers_every_tool_before_any_is_used() -> None:
