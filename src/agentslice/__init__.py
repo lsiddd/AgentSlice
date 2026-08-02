@@ -1,4 +1,12 @@
 from agentslice.__about__ import __version__
+from agentslice.compiler import (
+    CompilationReport,
+    CompileContext,
+    CompiledContext,
+    Pass,
+    PassOutcome,
+    ToolSchema,
+)
 from agentslice.errors import (
     AdapterError,
     AgentSliceError,
@@ -36,4 +44,10 @@ __all__ = [
     "TraceWriter",
     "from_openai_messages",
     "LiveSession",
+    "ToolSchema",
+    "CompileContext",
+    "CompilationReport",
+    "CompiledContext",
+    "PassOutcome",
+    "Pass",
 ]
