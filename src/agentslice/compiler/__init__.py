@@ -6,6 +6,7 @@ from agentslice.compiler.base import (
     PassOutcome,
     ToolSchema,
 )
+from agentslice.compiler.constraint_pinning import ConstraintPinningPass
 
 __all__ = [
     "ToolSchema",
@@ -14,4 +15,5 @@ __all__ = [
     "CompiledContext",
     "PassOutcome",
     "Pass",
+    "ConstraintPinningPass",
 ]
