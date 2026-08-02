@@ -21,6 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the retained baseline pair — a reader covered redundantly by both
   (routine, since value-matching links a later call to every prior fact
   sharing that value, not just the newest) doesn't block elimination.
+- Experimental failed-hypothesis folding, enabled only with
+  `agentslice compile --enable-pass failed_hypothesis_folding`. A
+  resolution pass validates trusted, versioned metadata before destructive
+  transformations; the folding pass then replaces a contiguous, causally
+  closed investigation with a synthetic `epistemic_state.v1`
+  `STATE_UPDATE`. Evidence is verified through JSON Pointer equality,
+  every invoked tool must be explicitly `effects="pure"`, and the fold is
+  skipped unless it reduces the estimated token count. Invalid,
+  unverifiable, effectful, or untrusted annotations fail closed as a no-op
+  with a compilation-report note.
+- Deterministic OpenAI lowering for `epistemic_state.v1`: the internal
+  `STATE_UPDATE` becomes canonical JSON in an `assistant` message during
+  replay, while every unknown state-update subtype remains rejected.
+- `ToolSchema.effects`, with `pure`, `effectful`, and the safe default
+  `unknown`; OpenAI-style CLI tool catalogs may declare it in a top-level
+  `effects` extension.
+- `CompilationReport.added_event_ids` and `agentslice diff` support for
+  synthetic events introduced by compiler passes.
 
 ## [0.2.0] - 2026-08-02
 

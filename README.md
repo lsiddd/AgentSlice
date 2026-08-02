@@ -18,9 +18,11 @@ a real model to check whether it actually still behaves the same way.
 
 ## What this is not
 
-- **Not a summarizer.** Nothing is rewritten or paraphrased. Events are kept
-  verbatim, projected down to the fields something still reads, or dropped
-  because nothing causally depends on them.
+- **Not a summarizer.** The default pipeline never rewrites or paraphrases
+  content. Events are kept verbatim, projected down to the fields something
+  still reads, or dropped because nothing causally depends on them. The
+  opt-in failed-hypothesis fold described below performs deterministic
+  structural synthesis from explicit annotations, never free-form generation.
 - **Not RAG.** There is no embedding index or similarity search. Relevance is
   derived from explicit `reads`/`writes` dependencies between events, not from
   vector distance.
@@ -59,6 +61,77 @@ constraint_pinning → dead_events → superseded_state → duplicate_result_eli
    fields something still reads.
 6. **`schema_pruning`** narrows a supplied tool catalog down to the tools
    actually used.
+
+### Experimental failed-hypothesis folding
+
+`failed_hypothesis_folding` is intentionally not part of `DEFAULT_PASSES`.
+Enable it explicitly when a trusted runtime or human has annotated a
+contiguous, side-effect-free investigation as a ruled-out hypothesis:
+
+```bash
+agentslice compile trace.jsonl --tools tools.json \
+  --enable-pass failed_hypothesis_folding -o compiled.jsonl
+```
+
+The annotation is versioned metadata on its dedicated conclusion event. It
+names the exact events to remove and points to machine-verifiable evidence:
+
+```json
+{
+  "agentslice": {
+    "fold": {
+      "schema_version": 1,
+      "fold_id": "fh_token_expired",
+      "kind": "ruled_out_hypothesis",
+      "hypothesis": {
+        "text": "The token expired",
+        "source_event_id": "m1"
+      },
+      "evidence": [
+        {
+          "event_id": "r1",
+          "json_pointer": "/valid",
+          "operator": "==",
+          "value": true
+        }
+      ],
+      "remove_event_ids": ["m1", "c1", "r1", "m2"],
+      "conclusion_event_ids": ["m2"],
+      "dedicated_conclusion": true,
+      "annotator": {
+        "kind": "runtime",
+        "name": "my-agent-runtime",
+        "version": "1.0"
+      }
+    }
+  }
+}
+```
+
+Every tool in the region must be positively declared pure. The CLI reads the
+AgentSlice-specific `effects` extension alongside the OpenAI function
+definition; missing classifications default to `unknown` and block folding:
+
+```json
+[
+  {
+    "type": "function",
+    "effects": "pure",
+    "function": {
+      "name": "check_token",
+      "parameters": {"type": "object"}
+    }
+  }
+]
+```
+
+Valid folds become synthetic `STATE_UPDATE` events with full provenance.
+Replay lowers only the known `epistemic_state.v1` subtype to canonical JSON
+in an `assistant` message; other state updates remain unsupported. The pass
+fails closed on malformed or untrusted annotations, unknown/effectful tools,
+non-contiguous regions, anchor or pinned events, side effects, unverifiable
+evidence, outgoing substantive dependencies, and folds that would not reduce
+the estimated token count.
 
 ## Replay and fork
 
@@ -167,17 +240,17 @@ print(next_action_equivalence(original, replayed) if original else "nothing to c
 
 ## Status
 
-Core IR, the five-pass compiler, and deterministic replay/fork are
+Core IR, the six-pass default compiler, and deterministic replay/fork are
 implemented and tested against real recorded sessions (Claude Code, Codex
 CLI, and raw OpenAI/OpenRouter chat completions), not just synthetic
-fixtures. See [CHANGELOG.md](CHANGELOG.md) for the full history, including a
-recent audit that closed several causal-completeness gaps (superseded state
-with live readers, future pinned events leaking into a fork, multi-turn
-conversational context) uncovered by real-world usage.
+fixtures. The opt-in failed-hypothesis pipeline is covered end to end with
+deterministic fixtures and mock HTTP replay; behavioral benchmarking against
+real models is the next milestone. See [CHANGELOG.md](CHANGELOG.md) for the
+full history, including a recent audit that closed several
+causal-completeness gaps uncovered by real-world usage.
 
 ### Roadmap
 
-- One more compiler pass: failed-hypothesis folding.
 - A benchmark harness against a subset of the Berkeley Function Calling
   Leaderboard (BFCL).
 - Export of compiled/uncompiled pairs as a DPO preference dataset.
