@@ -15,13 +15,15 @@ _NOOP_CATALOG_NOTE = "no tool catalog supplied, nothing to prune"
 class SchemaPruningPass(Pass):
     """Drops tool schemas that no surviving event actually invokes.
 
-    A no-op when ``ctx.tool_catalog`` is empty: with no catalog there is
-    nothing to prune, and the graph is returned unchanged. A tool that was
-    used but has no entry in the catalog is noted in the report by
-    default; with ``ctx.strict_schema=True`` it raises
-    :class:`~agentslice.errors.UnknownToolError` instead. This pass never
-    touches events or their token cost, only ``ctx.tool_catalog``; schema
-    token accounting is out of scope for v0.1.
+    A tool that was used but has no entry in the catalog is noted in the
+    report by default; with ``ctx.strict_schema=True`` it raises
+    :class:`~agentslice.errors.UnknownToolError` instead — including when
+    the catalog is empty and something was used, since an empty catalog is
+    just the limit case of "no entry for the tools in use", not a reason to
+    exempt it. Without ``strict_schema``, an empty catalog is a no-op: with
+    no catalog there is nothing to prune, and the graph is returned
+    unchanged. This pass never touches events or their token cost, only
+    ``ctx.tool_catalog``; schema token accounting is out of scope for v0.1.
     """
 
     name = "schema_pruning"
@@ -29,8 +31,13 @@ class SchemaPruningPass(Pass):
     def apply(self, graph: CausalGraph, ctx: CompileContext) -> PassOutcome:
         events = graph.events_in_order()
         tokens = estimate_graph_tokens(events)
+        used_tool_names = {event.tool_name for event in events if event.tool_name}
 
         if not ctx.tool_catalog:
+            if ctx.strict_schema and used_tool_names:
+                raise UnknownToolError(
+                    f"tools {sorted(used_tool_names)} were used but the tool catalog is empty"
+                )
             report = CompilationReport(
                 pass_name=self.name,
                 events_before=len(events),
@@ -40,8 +47,6 @@ class SchemaPruningPass(Pass):
                 notes=[_NOOP_CATALOG_NOTE],
             )
             return PassOutcome(graph=graph, ctx=ctx, report=report)
-
-        used_tool_names = {event.tool_name for event in events if event.tool_name}
 
         notes: list[str] = []
         for tool_name in sorted(used_tool_names):

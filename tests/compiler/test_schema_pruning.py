@@ -44,3 +44,17 @@ def test_empty_catalog_is_a_no_op() -> None:
     outcome = SchemaPruningPass().apply(graph, CompileContext())
     assert outcome.ctx.tool_catalog == {}
     assert outcome.graph is graph
+
+
+def test_empty_catalog_with_no_tools_used_is_a_no_op_even_in_strict_schema_mode() -> None:
+    event = TraceEvent(id="e1", seq=0, type=EventType.USER_GOAL)
+    graph = build_causal_graph([event])
+    outcome = SchemaPruningPass().apply(graph, CompileContext(strict_schema=True))
+    assert outcome.ctx.tool_catalog == {}
+
+
+def test_empty_catalog_with_tools_used_raises_in_strict_schema_mode() -> None:
+    call = TraceEvent(id="c1", seq=0, type=EventType.TOOL_CALL, tool_name="get_weather")
+    graph = build_causal_graph([call])
+    with pytest.raises(UnknownToolError):
+        SchemaPruningPass().apply(graph, CompileContext(strict_schema=True))
