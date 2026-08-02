@@ -13,13 +13,21 @@ class SupersededStatePass(Pass):
     """Removes or redacts events whose written facts have all been overwritten.
 
     An event is "fully superseded" when every key it wrote no longer points
-    to it as the latest version in ``graph.facts``. A fully superseded
-    event with ``side_effects=False`` is dropped entirely: its only role
-    was producing a value nothing downstream still uses. One with
-    ``side_effects=True`` is kept, since its execution still happened and
-    may matter for audit, but its ``outputs`` are redacted and its
-    ``pinned`` flag is cleared: a pin protects a fact's *current* value,
-    not a value it has since moved past.
+    to it as the latest version in ``graph.facts``. Superseded is not
+    enough to drop it, though: if some surviving event still has a causal
+    edge reading that historical version (``graph.edges`` has this event as
+    ``from_event_id``), rebuilding the graph without it would leave that
+    reader's ``reads`` unresolved, silently. Such an event is always kept
+    in full, regardless of ``side_effects``, since its value is still
+    substantively in use.
+
+    A fully superseded event with no surviving reader and
+    ``side_effects=False`` is dropped entirely: its only role was producing
+    a value nothing downstream still uses. One with ``side_effects=True``
+    is kept, since its execution still happened and may matter for audit,
+    but its ``outputs``/``metadata`` are redacted and its ``pinned`` flag
+    is cleared: a pin protects a fact's *current* value, not a value it has
+    since moved past.
 
     Events that never write a fact, or whose writes are still current, are
     left untouched.
@@ -34,6 +42,7 @@ class SupersededStatePass(Pass):
         current_writer_of = {
             key: versions[-1].origin_event_id for key, versions in graph.facts.items() if versions
         }
+        has_surviving_reader = {edge.from_event_id for edge in graph.edges}
 
         removed_ids: list[str] = []
         modified_ids: list[str] = []
@@ -45,13 +54,15 @@ class SupersededStatePass(Pass):
                 continue
 
             is_current = any(current_writer_of.get(key) == event.id for key in event.writes)
-            if is_current:
+            if is_current or event.id in has_surviving_reader:
                 new_events.append(event)
                 continue
 
             if event.side_effects:
                 new_events.append(
-                    event.model_copy(update={"outputs": dict(_REDACTED_OUTPUTS), "pinned": False})
+                    event.model_copy(
+                        update={"outputs": dict(_REDACTED_OUTPUTS), "pinned": False, "metadata": {}}
+                    )
                 )
                 modified_ids.append(event.id)
             else:

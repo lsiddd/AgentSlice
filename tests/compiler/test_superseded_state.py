@@ -62,6 +62,29 @@ def test_superseded_constraint_loses_its_pin() -> None:
     assert outcome.report.removed_event_ids == ["c1"]
 
 
+def test_writer_with_a_surviving_reader_is_kept_despite_being_superseded() -> None:
+    a = make_writer("a", 0, "1")
+    b = TraceEvent(
+        id="b",
+        seq=1,
+        type=EventType.STATE_UPDATE,
+        reads=frozenset({"status"}),
+        writes=frozenset({"derived"}),
+        outputs={"derived": "1"},
+    )
+    c = make_writer("c", 2, "2")
+    d = TraceEvent(
+        id="d",
+        seq=3,
+        type=EventType.STATE_UPDATE,
+        reads=frozenset({"status", "derived"}),
+    )
+    graph = build_causal_graph([a, b, c, d])
+    outcome = SupersededStatePass().apply(graph, CompileContext())
+    assert set(outcome.graph.events) == {"a", "b", "c", "d"}
+    assert outcome.report.removed_event_ids == []
+
+
 def test_event_that_never_writes_a_fact_is_untouched() -> None:
     event = TraceEvent(id="e1", seq=0, type=EventType.USER_GOAL, outputs={"content": "hi"})
     graph = build_causal_graph([event])
