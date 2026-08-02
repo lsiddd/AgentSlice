@@ -89,6 +89,47 @@ def test_default_compile_keeps_goal_and_originating_call_for_a_realistic_turn() 
     }
 
 
+def test_default_compile_keeps_all_constraints_when_their_state_is_superseded() -> None:
+    events = [
+        TraceEvent(
+            id="constraint-a",
+            seq=0,
+            type=EventType.CONSTRAINT,
+            outputs={"content": "constraint A"},
+            writes=frozenset({"conversation:current"}),
+        ),
+        TraceEvent(
+            id="constraint-b",
+            seq=1,
+            type=EventType.CONSTRAINT,
+            outputs={"content": "constraint B"},
+            writes=frozenset({"conversation:current"}),
+        ),
+        TraceEvent(
+            id="goal",
+            seq=2,
+            type=EventType.USER_GOAL,
+            outputs={"content": "go"},
+            reads=frozenset({"conversation:current"}),
+            writes=frozenset({"conversation:current", "user_goal:current"}),
+        ),
+        TraceEvent(
+            id="answer",
+            seq=3,
+            type=EventType.MODEL_MESSAGE,
+            outputs={"content": "done"},
+            reads=frozenset({"user_goal:current"}),
+            writes=frozenset({"conversation:current"}),
+        ),
+    ]
+
+    result = compile_graph(build_causal_graph(events))
+
+    constraints = [event for event in result.events if event.type is EventType.CONSTRAINT]
+    assert [event.id for event in constraints] == ["constraint-a", "constraint-b"]
+    assert all(event.pinned for event in constraints)
+
+
 def test_default_compile_keeps_goal_for_a_claude_code_transcript() -> None:
     records = [
         {"type": "user", "message": {"role": "user", "content": "what's the weather in nyc?"}},

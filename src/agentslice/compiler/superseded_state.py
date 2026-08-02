@@ -21,13 +21,14 @@ class SupersededStatePass(Pass):
     in full, regardless of ``side_effects``, since its value is still
     substantively in use.
 
-    A fully superseded event with no surviving reader and
+    The anchor and pinned events are mandatory roots, so they are always
+    kept in full even when all their writes have been superseded.
+
+    Any other fully superseded event with no surviving reader and
     ``side_effects=False`` is dropped entirely: its only role was producing
     a value nothing downstream still uses. One with ``side_effects=True``
     is kept, since its execution still happened and may matter for audit,
-    but its ``outputs``/``metadata`` are redacted and its ``pinned`` flag
-    is cleared: a pin protects a fact's *current* value, not a value it has
-    since moved past.
+    but its ``outputs``/``metadata`` are redacted.
 
     Events that never write a fact, or whose writes are still current, are
     left untouched.
@@ -38,6 +39,7 @@ class SupersededStatePass(Pass):
     def apply(self, graph: CausalGraph, ctx: CompileContext) -> PassOutcome:
         events = graph.events_in_order()
         tokens_before = estimate_graph_tokens(events)
+        anchor_id = ctx.anchor_event_id or (events[-1].id if events else None)
 
         current_writer_of = {
             key: versions[-1].origin_event_id for key, versions in graph.facts.items() if versions
@@ -49,6 +51,10 @@ class SupersededStatePass(Pass):
         new_events = []
 
         for event in events:
+            if event.id == anchor_id or event.pinned:
+                new_events.append(event)
+                continue
+
             if not event.writes:
                 new_events.append(event)
                 continue
@@ -60,9 +66,7 @@ class SupersededStatePass(Pass):
 
             if event.side_effects:
                 new_events.append(
-                    event.model_copy(
-                        update={"outputs": dict(_REDACTED_OUTPUTS), "pinned": False, "metadata": {}}
-                    )
+                    event.model_copy(update={"outputs": dict(_REDACTED_OUTPUTS), "metadata": {}})
                 )
                 modified_ids.append(event.id)
             else:

@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `compiler.superseded_state`: mandatory roots are now preserved in full.
+  Previously, a pinned event whose writes had all been superseded could be
+  removed (or redacted with its pin cleared), violating the retention
+  guarantees established by `constraint_pinning` and
+  `current_turn_retention`. The pass now also protects an explicit anchor
+  when used on its own.
 - `recording.openai_adapter.from_openai_messages`: a `user` message now
   also reads any known string fact that shares a salient token (an
   identifier-shaped substring, 6+ characters) with its own content, not

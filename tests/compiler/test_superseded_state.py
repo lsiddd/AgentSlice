@@ -39,7 +39,7 @@ def test_side_effect_event_is_kept_but_redacted() -> None:
     assert outcome.report.modified_event_ids == ["e1"]
 
 
-def test_superseded_constraint_loses_its_pin() -> None:
+def test_superseded_pinned_constraint_is_kept_unchanged() -> None:
     old_constraint = TraceEvent(
         id="c1",
         seq=0,
@@ -47,6 +47,7 @@ def test_superseded_constraint_loses_its_pin() -> None:
         writes=frozenset({"policy"}),
         outputs={"policy": "read-only"},
         pinned=True,
+        metadata={"source": "system"},
     )
     new_constraint = TraceEvent(
         id="c2",
@@ -58,8 +59,25 @@ def test_superseded_constraint_loses_its_pin() -> None:
     )
     graph = build_causal_graph([old_constraint, new_constraint])
     outcome = SupersededStatePass().apply(graph, CompileContext())
-    assert set(outcome.graph.events) == {"c2"}
-    assert outcome.report.removed_event_ids == ["c1"]
+    assert set(outcome.graph.events) == {"c1", "c2"}
+    assert outcome.graph.events["c1"] == old_constraint
+    assert outcome.report.removed_event_ids == []
+    assert outcome.report.modified_event_ids == []
+
+
+def test_superseded_anchor_is_kept_unchanged() -> None:
+    anchor = make_writer("anchor", 0, "pending")
+    latest = make_writer("latest", 1, "done")
+    graph = build_causal_graph([anchor, latest])
+
+    outcome = SupersededStatePass().apply(
+        graph,
+        CompileContext(anchor_event_id=anchor.id),
+    )
+
+    assert outcome.graph.events["anchor"] == anchor
+    assert outcome.report.removed_event_ids == []
+    assert outcome.report.modified_event_ids == []
 
 
 def test_writer_with_a_surviving_reader_is_kept_despite_being_superseded() -> None:
