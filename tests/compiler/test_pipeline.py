@@ -5,6 +5,8 @@ from agentslice.compiler.pipeline import DEFAULT_PASSES, Pipeline, compile_graph
 from agentslice.errors import BudgetNotSatisfiableError
 from agentslice.ir.events import EventType, TraceEvent
 from agentslice.ir.graph import CausalGraph, build_causal_graph
+from agentslice.recording.claude_code_adapter import from_claude_code_transcript
+from agentslice.recording.codex_adapter import from_codex_rollout
 from agentslice.recording.openai_adapter import from_openai_messages
 
 
@@ -80,6 +82,84 @@ def test_default_compile_keeps_goal_and_originating_call_for_a_realistic_turn() 
     result = compile_graph(graph)
     assert {e.type for e in result.events} == {
         EventType.CONSTRAINT,
+        EventType.USER_GOAL,
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.MODEL_MESSAGE,
+    }
+
+
+def test_default_compile_keeps_goal_for_a_claude_code_transcript() -> None:
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "what's the weather in nyc?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_1",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "get_weather",
+                        "input": {"city": "nyc"},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "72F"}],
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {"id": "msg_2", "content": [{"type": "text", "text": "it's 72F in nyc"}]},
+        },
+    ]
+    graph = build_causal_graph(from_claude_code_transcript(records))
+    result = compile_graph(graph)
+    assert {e.type for e in result.events} == {
+        EventType.USER_GOAL,
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.MODEL_MESSAGE,
+    }
+
+
+def test_default_compile_keeps_goal_for_a_codex_rollout() -> None:
+    def item(payload: dict[str, object]) -> dict[str, object]:
+        return {"type": "response_item", "payload": payload}
+
+    records = [
+        item(
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "what's the weather in nyc?"}],
+            }
+        ),
+        item(
+            {
+                "type": "function_call",
+                "name": "get_weather",
+                "arguments": '{"city": "nyc"}',
+                "call_id": "call_1",
+            }
+        ),
+        item({"type": "function_call_output", "call_id": "call_1", "output": "72F"}),
+        item(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "it's 72F in nyc"}],
+            }
+        ),
+    ]
+    graph = build_causal_graph(from_codex_rollout(records))
+    result = compile_graph(graph)
+    assert {e.type for e in result.events} == {
         EventType.USER_GOAL,
         EventType.TOOL_CALL,
         EventType.TOOL_RESULT,

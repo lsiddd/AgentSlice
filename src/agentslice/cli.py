@@ -25,6 +25,8 @@ from agentslice.errors import (
     TraceError,
 )
 from agentslice.ir.graph import build_causal_graph
+from agentslice.recording.claude_code_adapter import from_claude_code_transcript
+from agentslice.recording.codex_adapter import from_codex_rollout
 from agentslice.recording.jsonl import TraceReader, TraceWriter
 from agentslice.recording.openai_adapter import from_openai_messages
 from agentslice.replay import (
@@ -87,6 +89,32 @@ def _handle_errors(fn: Callable[[], None], *, verbose: bool) -> None:
         raise typer.Exit(code=_exit_code_for(exc)) from None
 
 
+_RECORD_FORMATS = ("openai", "claude-code", "codex")
+
+
+def _read_json_array(path: Path) -> list[Any]:
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise CLIUsageError(f"{path}: invalid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise CLIUsageError(f"{path}: expected a JSON array of messages")
+    return data
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise CLIUsageError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
+    return records
+
+
 @app.command()
 def record(
     ctx: typer.Context,
@@ -96,7 +124,8 @@ def record(
             "--input",
             exists=True,
             readable=True,
-            help="JSON file holding an array of OpenAI-compatible chat messages.",
+            help="Message log to convert. A JSON array for --format openai; JSON Lines "
+            "(one record per line) for --format claude-code or codex.",
         ),
     ],
     output_path: Annotated[
@@ -104,23 +133,27 @@ def record(
     ],
     format: Annotated[
         str,
-        typer.Option("--format", help="Input message format. Only 'openai' is supported."),
+        typer.Option(
+            "--format",
+            help="Input message format: 'openai', 'claude-code', or 'codex'.",
+        ),
     ] = "openai",
 ) -> None:
     """Convert a message log into a trace."""
     verbose = ctx.obj["verbose"]
 
     def run() -> None:
-        if format != "openai":
-            raise CLIUsageError(f"unsupported --format {format!r}: only 'openai' is supported")
-        try:
-            data = json.loads(input_path.read_text())
-        except json.JSONDecodeError as exc:
-            raise CLIUsageError(f"{input_path}: invalid JSON: {exc}") from exc
-        if not isinstance(data, list):
-            raise CLIUsageError(f"{input_path}: expected a JSON array of messages")
+        if format == "openai":
+            events = from_openai_messages(_read_json_array(input_path))
+        elif format == "claude-code":
+            events = from_claude_code_transcript(_read_jsonl(input_path))
+        elif format == "codex":
+            events = from_codex_rollout(_read_jsonl(input_path))
+        else:
+            raise CLIUsageError(
+                f"unsupported --format {format!r}: expected one of {_RECORD_FORMATS}"
+            )
 
-        events = from_openai_messages(data)
         with TraceWriter(output_path) as writer:
             for event in events:
                 writer.write(event)
