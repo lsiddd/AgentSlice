@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replay determinism, and an estimated cost per successful task. Currently
   covers `GorillaFileSystem` and the `multi_turn_base` category (13
   tasks); wider coverage is future work.
+- `compiler.current_turn_retention.CurrentTurnRetentionPass`, in
+  `DEFAULT_PASSES` right after `constraint_pinning`. Pins every event from
+  the anchor's own turn (since the most recent `user_goal`), regardless of
+  causal reach. `dead_events` only kept an event connected to the anchor
+  through a fact some later event actually reads; an exploratory tool call
+  made earlier in the same still-open turn, whose result was never reused
+  as a literal argument, had no such edge and got pruned the moment the
+  turn's next iteration recompiled the context — the agent then had no
+  record of having just done that and repeated it. Confirmed live against
+  the BFCL benchmark: fixes a `pwd`/`ls` loop that previously burned the
+  entire tool-iteration budget every turn without completing.
 
 ### Fixed
 
