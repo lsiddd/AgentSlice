@@ -11,6 +11,7 @@ from agentslice.errors import (
     UnknownToolError,
     UnsupportedMessageFormatError,
 )
+from agentslice.ir import CausalEdge, CausalGraph, EventType, Fact, TraceEvent, build_causal_graph
 
 __all__ = [
     "__version__",
@@ -24,4 +25,10 @@ __all__ = [
     "UnknownToolError",
     "BudgetNotSatisfiableError",
     "CLIUsageError",
+    "EventType",
+    "TraceEvent",
+    "Fact",
+    "CausalEdge",
+    "CausalGraph",
+    "build_causal_graph",
 ]
