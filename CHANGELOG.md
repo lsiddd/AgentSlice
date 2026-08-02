@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `recording.openai_adapter.from_openai_messages`: a `user` message now
+  also reads any known string fact that shares a salient token (an
+  identifier-shaped substring, 6+ characters) with its own content, not
+  just `user_goal:current`. A `tool_call`'s `reads` only caught a fact
+  reused as a whole, exact argument value, which missed a user naming a
+  file a prior tool result had produced — e.g. "sort
+  ArchivedFinalReport2024.txt" after an earlier `mv` renamed something to
+  that — since the result's own recorded value is the full sentence, not
+  the filename alone. `dead_events` saw no edge back to that `mv` and
+  dropped it, leaving a later turn referencing something the model never
+  saw get created. Found running the causal compiler against the full
+  13-task BFCL benchmark sample: fixed, `causal_compile`'s success rate on
+  that sample went from 77% to 85%, matching `full_trace`'s own ceiling.
 - `compiler.dead_events`: a pinned event's causal ancestors are now kept
   alive along with the pinned event itself. Previously only the anchor's
   ancestors and the pinned events were protected, so a pinned event that
