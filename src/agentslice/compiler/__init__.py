@@ -7,6 +7,7 @@ from agentslice.compiler.base import (
     ToolSchema,
 )
 from agentslice.compiler.constraint_pinning import ConstraintPinningPass
+from agentslice.compiler.dead_events import DeadEventsPass
 
 __all__ = [
     "ToolSchema",
@@ -16,4 +17,5 @@ __all__ = [
     "PassOutcome",
     "Pass",
     "ConstraintPinningPass",
+    "DeadEventsPass",
 ]
