@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   covers `GorillaFileSystem` and the `multi_turn_base` category (13
   tasks); wider coverage is future work.
 
+### Fixed
+
+- `compiler.dead_events`: a pinned event's causal ancestors are now kept
+  alive along with the pinned event itself. Previously only the anchor's
+  ancestors and the pinned events were protected, so a pinned event that
+  read a fact written by an earlier, unpinned, non-ancestor event could
+  survive without the data it depends on, leaving that read unresolved
+  once the graph was rebuilt from the survivors.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added
