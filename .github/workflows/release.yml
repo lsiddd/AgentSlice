@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.head_commit.message, 'chore(release): bump version to ')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from commit message
+        id: version
+        run: |
+          MSG=$(git log -1 --format=%s)
+          VERSION=$(echo "$MSG" | sed -nE 's/^chore\(release\): bump version to ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')
+          if [ -z "$VERSION" ]; then
+            echo "commit message does not match the expected release-bump format: $MSG" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if the tag already exists
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract changelog section
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          awk -v ver="$VERSION" '
+            found && /^## \[/ { exit }
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found { print }
+          ' CHANGELOG.md | awk 'NF{p=1} p' | tac | awk 'NF{p=1} p' | tac > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "no CHANGELOG.md section found for version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Create tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "AgentSlice v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v$VERSION" \
+            --title "AgentSlice v$VERSION" \
+            --notes-file /tmp/release-notes.md
